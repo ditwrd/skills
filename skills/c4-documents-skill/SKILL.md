@@ -60,12 +60,31 @@ Before Stage 1, output one short paragraph:
 
 If the user corrects either path, restart Setup.
 
+### 5. For monorepos: scope to one subproject
+
+Monorepos (`packages/`, `apps/`, `services/`, `crates/`) get one pipeline per subproject. The user picks the scope — there is no auto-detect. Pick ONE subproject as the new `{project_root}`, re-run the skill for each.
+
+Anti-pattern: do NOT preprocess all subprojects at once and stitch — each gets its own full pipeline and output dir.
+
 ### Anti-patterns (do not do)
 
 - Writing output docs directly into the project root (pollutes the repo)
 - Putting `.c4-agent/` in `/tmp` (loses the persistence advantage across stages)
 - Skipping the user question and silently defaulting (the user may want a subdir like `docs/architecture/`)
 - Deleting `.c4-agent/` mid-pipeline (loses earlier research)
+
+---
+
+## Scaling Controls for Huge Projects
+
+When the subproject is Large or Huge, apply these defaults to prevent context blowup.
+
+- **Directory-only view (file count > 100)**: switch `list_files` to a directory tree, no filenames.
+- **Top-N files by importance** (root > deep, entry-referenced > orphan): pass top 25 (Large) or 15 (Huge) to research.
+- **File-size cap**: `read_file` truncated to 256KB (Large) or 128KB (Huge); larger files get `view_file_outline` only.
+- **README truncation**: cap at 16KB (Large) or 8KB (Huge).
+- **Skip-source research prompts**: pass signatures and summaries, not raw source.
+- **Stage skipping for re-runs**: if `.c4-agent/preprocessing.md` exists, Stage 1 reads it instead of rescanning. Same for `architecture.md` and Stage 2.
 
 ---
 
@@ -84,10 +103,7 @@ Detailed execution guides for each stage live in `references/`. Load them on dem
 
 ## Stage 1: Preprocess -> Understand the Project
 
-**Decision points**:
-- Pick a scanning strategy by project size (see quick-path table below)
-- Produce a preprocessing report: project name, language, framework, core module list, README summary
-- The report is the foundation for every later stage — keep it accurate
+Produce a preprocessing report (project name, language, framework, core module list, README summary) — this is the foundation for every later stage. Pick a scanning strategy by project size:
 
 **Quick path by project size**:
 
@@ -95,7 +111,8 @@ Detailed execution guides for each stage live in `references/`. Load them on dem
 |------|-----------|-------------------|
 | Small | <100 source files | `list_files` recursive + `read_file` for all core files |
 | Medium | 100-500 source files | `list_files` one level + `read_file` for entry/config/README + `codebase_search` semantic |
-| Large | >500 source files | README + main config + entry + `view_file_outline` for core modules + `grep_search` for precision |
+| Large | 500-5000 source files | Directory tree only, top-25 files by importance, `read_file` cap 256KB, README cap 16KB |
+| Huge | >5000 source files | Directory tree only, top-15 by importance, `read_file` cap 128KB, README cap 8KB, prefer `codebase_search` over `read_file` |
 
 > Detailed steps in `references/phase1-preprocessing.md`
 
@@ -165,13 +182,9 @@ Persist each Stage 2 research report to `{project_root}/.c4-agent/` (the scratch
 
 ---
 
-## Tool Usage Priority
+## Tool Usage
 
-1. `codebase_search` — semantic search (find code that "does X")
-2. `grep_search` — exact search (find specific symbols/class/function names)
-3. `view_file_outline` — quick file structure (no full read)
-4. `read_file` — deep read on key files (entry points, core modules)
-5. `list_files` — scan directory structure
+**Tool order**: `codebase_search` (semantic) → `grep_search` (exact) → `view_file_outline` (structure) → `read_file` (deep) → `list_files` (scan). Full per-tool guidance lives in `references/phase1-preprocessing.md`.
 
 **Paths are absolute when writing**: when persisting to `.c4-agent/` or writing the final output docs, always pass absolute paths. Relative paths silently land in the agent's cwd, not the project root — this is the failure mode that put docs in the wrong place.
 

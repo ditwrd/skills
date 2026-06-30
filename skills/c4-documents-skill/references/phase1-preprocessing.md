@@ -50,6 +50,22 @@ Every `read_file`, `write_to_file`, `list_files`, and `codebase_search` against 
 
 ---
 
+## Tool Usage Priority
+
+Use tools in this order — pick the cheapest tool that answers the question:
+
+1. `codebase_search` — semantic search (find code that "does X")
+2. `grep_search` — exact search (find specific symbols/class/function names)
+3. `view_file_outline` — quick file structure (no full read)
+4. `read_file` — deep read on key files (entry points, core modules)
+5. `list_files` — scan directory structure
+
+Rationale: each later tool returns more bytes, and a Large/Huge project will blow up the prompt if you reach for `read_file` first. Default to `codebase_search` for "where is X" and `grep_search` for "what calls X". `view_file_outline` before `read_file` for any file > 100 lines.
+
+For Large/Huge projects, see the Scaling Controls section in `SKILL.md` (directory-only view, top-N importance, file-size cap, README truncation, stage skipping).
+
+---
+
 ## Step 1.1: Scan Project Root
 
 Use `list_files(path="{project_root}", recursive=false)` to scan the root directory.
