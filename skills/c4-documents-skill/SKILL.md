@@ -1,6 +1,6 @@
 ---
 name: c4-documents-skill
-description: This skill should be used when the user asks to "generate project documentation", "analyze codebase architecture", "create C4 architecture diagrams", "document a repository", "generate technical docs", "write docs for this project", "auto-generate documentation", "analyze this codebase", or any request involving automated C4-model documentation generation for a software project. The skill autonomously analyzes any codebase and produces high-quality C4 architecture documentation (Overview, Architecture, Workflow, Deep-Exploration modules, Boundary Interfaces, Database Overview) — equivalent to what deepwiki-rs produces — purely through agent reasoning and tool usage, with no external binary dependency.
+description: Generates C4 architecture documentation for any codebase: 6 markdown files (Overview, Architecture, Workflow, Deep-Exploration modules, Boundary Interfaces, Database Overview). Use when the user asks to "create C4 architecture diagrams", "document a repository", "generate project documentation", "auto-generate documentation", or "analyze codebase architecture". Pure agent reasoning + tool calls — no external binary required.
 version: 3.0.0
 ---
 
@@ -20,7 +20,7 @@ version: 3.0.0
 
 ## Setup (do this BEFORE Stage 1)
 
-Two directory decisions must be concrete before any work begins. The agent MUST do these in order, and MUST NOT skip them.
+Three setup steps must complete before any work begins. The agent MUST do these in order, and MUST NOT skip them.
 
 ### 1. Identify the project root
 
@@ -159,38 +159,9 @@ Generated docs must be **human-friendly reading**, not cold PPT-style bullet poi
 
 ---
 
-## Intermediate Artifact Persistence Strategy (Critical)
+## Intermediate Artifact Persistence
 
-### The problem
-A single agent conversation has a finite context window. As analysis deepens, early research results may be "forgotten" under context pressure. Research has shown this is the #1 reason agents skip the scratch dir.
-
-### The fix
-After each research step, persist key findings to `{project_root}/.c4-agent/` (the dir created in Setup), not just the conversation context.
-
-```
-.c4-agent/
-├── preprocessing.md        # Stage 1 output
-├── c1-system-context.md    # System context report
-├── c2-domain-modules.md    # Domain modules report
-├── architecture.md         # Architecture research
-├── workflow.md             # Workflow research
-├── boundary.md             # Boundary interface report
-├── database.md             # Database report (conditional)
-└── modules/                # Per-module deep reports
-    ├── llm.md
-    ├── cache.md
-    └── ...
-```
-
-**How to use it**:
-- After each research step finishes -> `write_to_file` the corresponding report into `{project_root}/.c4-agent/`
-- During composition, when a report is needed -> `read_file` from `{project_root}/.c4-agent/`
-- After all output docs are written -> delete `{project_root}/.c4-agent/` (optional: keep for review)
-
-**Why this works**:
-- Frees early research from context pressure; reload on demand
-- Research results don't get lost even in very long conversations
-- Equivalent to the upstream pipeline's Memory scope mechanism
+Persist each Stage 2 research report to `{project_root}/.c4-agent/` (the scratch dir from Setup) so context pressure doesn't drop early findings. Full layout and the read/write pattern live in `references/phase3-composition.md` under "Intermediate Artifact Persistence Strategy" — load it during Stage 2 and Stage 3.
 
 ---
 
