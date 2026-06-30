@@ -213,3 +213,4 @@ After each research step, persist key findings to `{project_root}/.c4-agent/` (t
 - `references/phase3-composition.md` — document templates + chunked-write strategy + code reference rules
 - `references/phase4-output.md` — Mermaid validation checklist + confidence score template
 - `references/doc-templates.md` — Mermaid syntax cheat sheet + diagram type guide
+- `scripts/verify.sh` — post-run automated check (run after writing the 6 docs)

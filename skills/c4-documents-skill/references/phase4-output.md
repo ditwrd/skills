@@ -97,6 +97,24 @@ Correct: subgraph inputLayer["Input Layer"]
 
 ---
 
+## Automated Verification
+
+After writing all 6 docs, run the bundled verifier before declaring success:
+
+```bash
+../.agents/skills/c4-documents-skill/scripts/verify.sh ./{output_dir}
+```
+
+The script checks:
+- 6 expected files exist (5 mandatory + conditional `6.Database-Overview.md`)
+- `4.Deep-Exploration/` has at least one module doc
+- Every Mermaid block parses (uses [selkie](https://github.com/btucker/selkie) for real parsing when `selkie` is on `PATH`; falls back to regex otherwise)
+- Every required doc ends with a confidence score
+
+Install selkie for real Mermaid validation: `cargo install selkie-rs`. Without it, the script still runs but uses heuristic regex checks.
+
+---
+
 ## Content Quality Validation Checklist
 
 ### Narrative style validation (P0 critical)
