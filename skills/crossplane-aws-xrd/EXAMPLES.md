@@ -1,26 +1,24 @@
 # Examples
 
-Two complete, copy-pastable AWS composites. Each is the minimal viable version — adapt field paths to whatever version of `provider-upjet-aws` you have installed.
+Two complete, copy-pastable AWS composites for Crossplane v2. Each is the minimal viable version — adapt field paths to whatever version of `provider-upjet-aws` you have installed.
 
 ## Example 1: XNetwork — VPC + public subnet + private subnet + IGW + route tables
 
-A foundational network primitive. Other composites reference its `vpcId` / `subnetIds` from the connection secret.
+A foundational network primitive. The render step emits all six resources, and `function-auto-ready` waits for the whole set before marking the XR ready.
 
 ### XRD
 
 ```yaml
-apiVersion: apiextensions.crossplane.io/v1
+apiVersion: apiextensions.crossplane.io/v2
 kind: CompositeResourceDefinition
 metadata:
   name: xnetworks.example.org
 spec:
+  scope: Namespaced
   group: example.org
   names:
     kind: XNetwork
     plural: xnetworks
-  claimNames:
-    kind: Network
-    plural: networks
   versions:
     - name: v1alpha1
       served: true
@@ -42,10 +40,6 @@ spec:
                 publicSubnetId:  { type: string }
                 privateSubnetId: { type: string }
                 ready:     { type: boolean }
-  connectionSecretKeys:
-    - vpcId
-    - publicSubnetId
-    - privateSubnetId
 ```
 
 ### Composition
@@ -71,11 +65,11 @@ spec:
         inline:
           template: |
             ---
-            apiVersion: ec2.aws.upbound.io/v1beta1
+            apiVersion: ec2.aws.m.upbound.io/v1beta1
             kind: VPC
             metadata:
-              name: {{ .observed.composite.resource.metadata.name }}-vpc
               annotations:
+                {{ setResourceNameAnnotation "vpc" }}
                 crossplane.io/external-name: {{ .observed.composite.resource.metadata.name }}-vpc
             spec:
               forProvider:
@@ -88,16 +82,16 @@ spec:
               providerConfigRef:
                 name: default
             ---
-            apiVersion: ec2.aws.upbound.io/v1beta1
+            apiVersion: ec2.aws.m.upbound.io/v1beta1
             kind: Subnet
             metadata:
-              name: {{ .observed.composite.resource.metadata.name }}-public
               annotations:
+                {{ setResourceNameAnnotation "public" }}
                 crossplane.io/external-name: {{ .observed.composite.resource.metadata.name }}-public
             spec:
               forProvider:
                 region: {{ .observed.composite.resource.spec.region }}
-                vpcId: {{ dig "status" "atProvider" "vpcId" "" .observed.resources.vpc }}
+                vpcId: {{ dig "status" "atProvider" "vpcId" "" (index $.observed.resources "vpc") }}
                 cidrBlock: 10.0.1.0/24
                 mapPublicIpOnLaunch: true
                 availabilityZone: {{ .observed.composite.resource.spec.region }}a
@@ -106,16 +100,16 @@ spec:
               providerConfigRef:
                 name: default
             ---
-            apiVersion: ec2.aws.upbound.io/v1beta1
+            apiVersion: ec2.aws.m.upbound.io/v1beta1
             kind: Subnet
             metadata:
-              name: {{ .observed.composite.resource.metadata.name }}-private
               annotations:
+                {{ setResourceNameAnnotation "private" }}
                 crossplane.io/external-name: {{ .observed.composite.resource.metadata.name }}-private
             spec:
               forProvider:
                 region: {{ .observed.composite.resource.spec.region }}
-                vpcId: {{ dig "status" "atProvider" "vpcId" "" .observed.resources.vpc }}
+                vpcId: {{ dig "status" "atProvider" "vpcId" "" (index $.observed.resources "vpc") }}
                 cidrBlock: 10.0.2.0/24
                 availabilityZone: {{ .observed.composite.resource.spec.region }}b
                 tags:
@@ -123,112 +117,65 @@ spec:
               providerConfigRef:
                 name: default
             ---
-            apiVersion: ec2.aws.upbound.io/v1beta1
+            apiVersion: ec2.aws.m.upbound.io/v1beta1
             kind: InternetGateway
             metadata:
-              name: {{ .observed.composite.resource.metadata.name }}-igw
               annotations:
+                {{ setResourceNameAnnotation "igw" }}
                 crossplane.io/external-name: {{ .observed.composite.resource.metadata.name }}-igw
             spec:
               forProvider:
                 region: {{ .observed.composite.resource.spec.region }}
-                vpcId: {{ dig "status" "atProvider" "vpcId" "" .observed.resources.vpc }}
+                vpcId: {{ dig "status" "atProvider" "vpcId" "" (index $.observed.resources "vpc") }}
                 tags:
                   Name: {{ .observed.composite.resource.metadata.name }}-igw
               providerConfigRef:
                 name: default
             ---
-            apiVersion: ec2.aws.upbound.io/v1beta1
+            apiVersion: ec2.aws.m.upbound.io/v1beta1
             kind: RouteTable
             metadata:
-              name: {{ .observed.composite.resource.metadata.name }}-public
               annotations:
+                {{ setResourceNameAnnotation "publicrt" }}
                 crossplane.io/external-name: {{ .observed.composite.resource.metadata.name }}-public
             spec:
               forProvider:
                 region: {{ .observed.composite.resource.spec.region }}
-                vpcId: {{ dig "status" "atProvider" "vpcId" "" .observed.resources.vpc }}
+                vpcId: {{ dig "status" "atProvider" "vpcId" "" (index $.observed.resources "vpc") }}
                 route:
                   - cidrBlock: 0.0.0.0/0
-                    gatewayId: {{ dig "status" "atProvider" "internetGatewayId" "" .observed.resources.igw }}
+                    gatewayId: {{ dig "status" "atProvider" "internetGatewayId" "" (index $.observed.resources "igw") }}
                 tags:
                   Name: {{ .observed.composite.resource.metadata.name }}-public
               providerConfigRef:
                 name: default
             ---
-            apiVersion: ec2.aws.upbound.io/v1beta1
+            apiVersion: ec2.aws.m.upbound.io/v1beta1
             kind: RouteTableAssociation
             metadata:
-              name: {{ .observed.composite.resource.metadata.name }}-public
               annotations:
+                {{ setResourceNameAnnotation "publicrta" }}
                 crossplane.io/external-name: {{ .observed.composite.resource.metadata.name }}-public-rta
             spec:
               forProvider:
                 region: {{ .observed.composite.resource.spec.region }}
-                subnetId: {{ dig "status" "atProvider" "subnetId" "" .observed.resources.public }}
-                routeTableId: {{ dig "status" "atProvider" "routeTableId" "" .observed.resources.publicrt }}
+                subnetId: {{ dig "status" "atProvider" "subnetId" "" (index $.observed.resources "public") }}
+                routeTableId: {{ dig "status" "atProvider" "routeTableId" "" (index $.observed.resources "publicrt") }}
               providerConfigRef:
                 name: default
 
-    - step: observe-and-report-readiness
+    - step: automatically-detect-ready-composed-resources
       functionRef:
-        name: function-go-templating
-      input:
-        apiVersion: gotemplating.fn.crossplane.io/v1beta1
-        kind: GoTemplate
-        source: Inline
-        inline:
-          # v0.12.x: the observe step must emit a `kind: Result` Kubernetes
-          # resource (not a bare YAML object). Every resource rendered by a
-          # step also needs the `gotemplating.fn.crossplane.io/composition-
-          # resource-name` annotation so the function can key it in
-          # .observed.resources for downstream steps.
-          template: |
-            ---
-            apiVersion: internal.crossplane.io/v1beta1
-            kind: Result
-            metadata:
-              name: observe
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: observe
-            status:
-              vpcId: {{ dig "status" "atProvider" "vpcId" "" .observed.resources.vpc }}
-              publicSubnetId:  {{ dig "status" "atProvider" "subnetId" "" .observed.resources.public }}
-              privateSubnetId: {{ dig "status" "atProvider" "subnetId" "" .observed.resources.private }}
-              ready: {{ and
-                  (eq (dig "status" "conditions" "Ready" "status" "False" .observed.resources.vpc) "True")
-                  (eq (dig "status" "conditions" "Ready" "status" "False" .observed.resources.public) "True")
-                  (eq (dig "status" "conditions" "Ready" "status" "False" .observed.resources.private) "True")
-              }}
-              conditions:
-                - type: Ready
-                  status: "{{ if (and
-                      (eq (dig "status" "conditions" "Ready" "status" "False" .observed.resources.vpc) "True")
-                      (eq (dig "status" "conditions" "Ready" "status" "False" .observed.resources.public) "True")
-                      (eq (dig "status" "conditions" "Ready" "status" "False" .observed.resources.private) "True")
-                    ) }}True{{ else }}False{{ end }}"
-                  reason: Available
-                  message: "vpc and subnets are ready"
-                - type: Synced
-                  status: "True"
-                  reason: ReconcileSuccess
-              connectionDetails:
-                vpcId:
-                  type: FromValue
-                  fromValuePath: status.vpcId
-                publicSubnetId:
-                  type: FromValue
-                  fromValuePath: status.publicSubnetId
-                privateSubnetId:
-                  type: FromValue
-                  fromValuePath: status.privateSubnetId
+        name: function-auto-ready
 ```
 
-### Claim
+### XR
+
+In v2, `XNetwork` is itself the user-facing resource — there is no separate claim.
 
 ```yaml
 apiVersion: example.org/v1alpha1
-kind: Network
+kind: XNetwork
 metadata:
   name: my-app
   namespace: default
@@ -237,25 +184,23 @@ spec:
   cidrBlock: 10.0.0.0/16
 ```
 
-## Example 2: XPostgres — RDS instance with VPC, subnet group, security group, and a generated password
+## Example 2: XPostgres — RDS instance with security group, subnet group, password Secret, and a composed connection Secret
 
-Shows a multi-resource composite where one MR depends on outputs from another composite (`Network`). Connection secret carries `endpoint`, `username`, `password`.
+Self-contained: the XR takes `vpcId` and `subnetIds` directly instead of referencing another XR, so the example focuses on the v2 patterns (password via Secret, connection details via a composed `Secret`, readiness via `function-auto-ready`) rather than cross-XR plumbing.
 
 ### XRD
 
 ```yaml
-apiVersion: apiextensions.crossplane.io/v1
+apiVersion: apiextensions.crossplane.io/v2
 kind: CompositeResourceDefinition
 metadata:
   name: xpostgreses.example.org
 spec:
+  scope: Namespaced
   group: example.org
   names:
     kind: XPostgres
     plural: xpostgreses
-  claimNames:
-    kind: Postgres
-    plural: postgres
   versions:
     - name: v1alpha1
       served: true
@@ -266,23 +211,26 @@ spec:
           properties:
             spec:
               type: object
-              required: [region, networkRef]
+              required: [region, vpcId, subnetIds]
               properties:
-                region:     { type: string }
-                networkRef: { type: object, required: [name], properties: { name: { type: string } } }
-                version:    { type: string, default: "15.7" }
+                region:        { type: string }
+                vpcId:         { type: string }
+                subnetIds:
+                  type: array
+                  items: { type: string }
+                version:       { type: string, default: "15.7" }
                 instanceClass: { type: string, default: "db.t3.micro" }
-                storageGb:  { type: integer, default: 20 }
+                storageGb:     { type: integer, default: 20 }
             status:
               type: object
               properties:
-                endpoint:   { type: string }
-                ready:      { type: boolean }
-  connectionSecretKeys:
-    - endpoint
+                endpoint: { type: string }
+                ready:    { type: boolean }
 ```
 
 ### Composition
+
+The render step emits a Secret (the generated password), the security group, the RDS instance, the subnet group, and a composed `Secret` that copies `endpoint`/`username`/`password` from the instance's `connectionDetails` on the second reconcile onward.
 
 ```yaml
 apiVersion: apiextensions.crossplane.io/v1
@@ -305,16 +253,27 @@ spec:
         inline:
           template: |
             ---
-            apiVersion: ec2.aws.upbound.io/v1beta1
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              annotations:
+                {{ setResourceNameAnnotation "pg-pw" }}
+              name: {{ .observed.composite.resource.metadata.name }}-pg-pw
+              namespace: crossplane-system
+            type: Opaque
+            data:
+              password: {{ randAlphaNum 24 | b64enc }}
+            ---
+            apiVersion: ec2.aws.m.upbound.io/v1beta1
             kind: SecurityGroup
             metadata:
-              name: {{ .observed.composite.resource.metadata.name }}-rds-sg
               annotations:
+                {{ setResourceNameAnnotation "sg" }}
                 crossplane.io/external-name: {{ .observed.composite.resource.metadata.name }}-rds-sg
             spec:
               forProvider:
                 region: {{ .observed.composite.resource.spec.region }}
-                vpcId: {{ .observed.composite.resource.spec.networkRef.name }}
+                vpcId: {{ .observed.composite.resource.spec.vpcId }}
                 ingress:
                   - fromPort: 5432
                     toPort: 5432
@@ -331,28 +290,26 @@ spec:
               providerConfigRef:
                 name: default
             ---
-            apiVersion: rds.aws.upbound.io/v1beta1
+            apiVersion: rds.aws.m.upbound.io/v1beta1
             kind: SubnetGroup
             metadata:
-              name: {{ .observed.composite.resource.metadata.name }}-subnets
               annotations:
+                {{ setResourceNameAnnotation "subnets" }}
                 crossplane.io/external-name: {{ .observed.composite.resource.metadata.name }}-subnets
             spec:
               forProvider:
                 region: {{ .observed.composite.resource.spec.region }}
                 name: {{ .observed.composite.resource.metadata.name }}-subnets
                 description: "rds subnets for {{ .observed.composite.resource.metadata.name }}"
-                subnetIds:
-                  - {{ .observed.composite.resource.spec.subnetIds.public }}
-                  - {{ .observed.composite.resource.spec.subnetIds.private }}
+                subnetIds: {{ toJson .observed.composite.resource.spec.subnetIds }}
               providerConfigRef:
                 name: default
             ---
-            apiVersion: rds.aws.upbound.io/v1beta1
+            apiVersion: rds.aws.m.upbound.io/v1beta1
             kind: Instance
             metadata:
-              name: {{ .observed.composite.resource.metadata.name }}-pg
               annotations:
+                {{ setResourceNameAnnotation "pg" }}
                 crossplane.io/external-name: {{ .observed.composite.resource.metadata.name }}-pg
             spec:
               forProvider:
@@ -362,71 +319,60 @@ spec:
                 instanceClass: {{ default "db.t3.micro" .observed.composite.resource.spec.instanceClass }}
                 allocatedStorage: {{ default 20 .observed.composite.resource.spec.storageGb }}
                 username: postgres
-                password: {{ randAlphaNum 24 | b64enc | quote }}
+                passwordSecretRef:
+                  name: {{ .observed.composite.resource.metadata.name }}-pg-pw
+                  key: password
+                  namespace: crossplane-system
                 dbName: app
                 skipFinalSnapshot: true
                 publiclyAccessible: false
                 vpcSecurityGroupIds:
-                  - {{ dig "status" "atProvider" "id" "" .observed.resources.sg }}
-                dbSubnetGroupName: {{ dig "status" "atProvider" "dbSubnetGroupName" "" .observed.resources.subnets }}
+                  - {{ dig "status" "atProvider" "id" "" (index $.observed.resources "sg") }}
+                dbSubnetGroupName: {{ .observed.composite.resource.metadata.name }}-subnets
               providerConfigRef:
                 name: default
-
-    - step: observe-and-report-readiness
-      functionRef:
-        name: function-go-templating
-      input:
-        apiVersion: gotemplating.fn.crossplane.io/v1beta1
-        kind: GoTemplate
-        source: Inline
-        inline:
-          # v0.12.x: observe step emits a `kind: Result` resource. See
-          # Example 1 above for the full pattern + why the annotation is required.
-          template: |
+              writeConnectionSecretToRef:
+                name: {{ .observed.composite.resource.metadata.name }}-pg
+                namespace: crossplane-system
             ---
-            apiVersion: internal.crossplane.io/v1beta1
-            kind: Result
+            apiVersion: v1
+            kind: Secret
             metadata:
-              name: observe
               annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: observe
-            status:
-              endpoint: {{ dig "status" "atProvider" "endpoint" "" .observed.resources.pg }}
-              ready: {{ eq (dig "status" "atProvider" "instanceStatus" "" .observed.resources.pg) "available" }}
-              conditions:
-                - type: Ready
-                  status: "{{ if eq (dig "status" "atProvider" "instanceStatus" "" .observed.resources.pg) "available" }}True{{ else }}False{{ end }}"
-                  reason: "{{ if eq (dig "status" "atProvider" "instanceStatus" "" .observed.resources.pg) "available" }}Available{{ else }}Creating{{ end }}"
-                - type: Synced
-                  status: "True"
-                  reason: ReconcileSuccess
-              connectionDetails:
-                endpoint:
-                  type: FromValue
-                  fromValuePath: status.endpoint
-                username:
-                  type: FromValue
-                  fromValuePath: status.atProvider.masterUsername
-                password:
-                  type: FromConnectionSecretKey
-                  fromConnectionSecretKey: masterUserPassword
+                {{ setResourceNameAnnotation "connection-secret" }}
+              name: {{ .observed.composite.resource.metadata.name }}-pg-conn
+              namespace: {{ .observed.composite.resource.metadata.namespace }}
+            {{ if eq $.observed.resources nil }}
+            data: {}
+            {{ else }}
+            data:
+              endpoint: {{ (index $.observed.resources "pg").connectionDetails.endpoint | b64enc }}
+              username: {{ (index $.observed.resources "pg").connectionDetails.username | b64enc }}
+              password: {{ (index $.observed.resources "pg").connectionDetails.password | b64enc }}
+            {{ end }}
+
+    - step: automatically-detect-ready-composed-resources
+      functionRef:
+        name: function-auto-ready
 ```
 
-### Claim
+### XR
 
 ```yaml
 apiVersion: example.org/v1alpha1
-kind: Postgres
+kind: XPostgres
 metadata:
   name: my-app-db
   namespace: default
 spec:
   region: us-east-1
-  networkRef:
-    name: my-app
+  vpcId: vpc-0123456789abcdef0
+  subnetIds:
+    - subnet-aaa
+    - subnet-bbb
   version: "15.7"
   instanceClass: db.t3.micro
   storageGb: 20
 ```
 
-Note: the claim depends on the rendered `Network` XR having published `subnetIds.public` and `subnetIds.private` into its connection secret. Read them with the standard Crossplane resource-reference flow (`resource.attributes.status`).
+Read the composed connection details with `kubectl get secret my-app-db-pg-conn -n default -o jsonpath='{.data}' | base64 -d`. On the first reconcile the `data` map is empty (the `pg` instance hasn't produced `connectionDetails` yet) — the nil-guard in the template prevents the `index` call from panicking.
