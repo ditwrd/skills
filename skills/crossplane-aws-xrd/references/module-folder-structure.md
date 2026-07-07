@@ -37,10 +37,12 @@ dependencies:
 
 subcommands:
   render: render --include-full-xr --crossplane-version=v2.3.1
-  validate: beta validate --error-on-missing-schemas --crossplane-version=v2.3.1
+  # crossplane CLI v2.3.x has no `beta validate` subcommand — drop `crds:` from
+  # tests, or override `validate:` with a subcommand that exists in your CLI:
+  # validate: validate --crossplane-version=v2.3.1
 ```
 
-xprin-specific config: which flags get passed to `crossplane render` and `crossplane beta validate`. The version pin matches the engine version that ships in the Docker image, so the local CLI and the engine agree on the v2 XRD schema.
+xprin-specific config: which flags get passed to `crossplane render` and (optionally) `crossplane validate`. The version pin matches the engine version that ships in the Docker image, so the local CLI and the engine agree on the v2 XRD schema. If your CLI is newer and has `beta validate`, uncomment it here.
 
 ### `<repo>/provider/function.yaml` — shared function packages
 
@@ -110,7 +112,7 @@ spec:
       functionRef: { name: function-auto-ready }
 ```
 
-The two-step render is the standard pattern. Step 1 emits resources with no observed state dependency. Step 2 nil-guards on `$.observed.resources` and emits dependent resources (BucketPolicy, BucketNotification, etc.) after the provider has observed the step-1 resources in AWS. The `ready` step is always last and always `function-auto-ready` — never configure it.
+The two-step render is the standard pattern. Step 1 emits resources with no observed state dependency. Step 2 nil-guards on `$.observed.resources` and emits dependent resources (BucketPolicy, BucketNotification, etc.) after the provider has observed the step-1 resources in AWS. The `ready` step is always last and always `function-auto-ready` — never configure it. See [references/testing-with-xprin.md](testing-with-xprin.md) for the xprin test pattern that exercises this.
 
 ### `<module>/tests/` — test fixtures, self-contained
 
