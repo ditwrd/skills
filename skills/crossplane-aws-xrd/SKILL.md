@@ -17,7 +17,7 @@ Author v2 XRDs and Compositions for AWS. Artifacts are committed to Git and sync
 3. **Write the XRD** — `apiextensions.crossplane.io/v2`, `scope: Namespaced` (or `Cluster`). No `claimNames`, no `connectionSecretKeys`. See [REFERENCE.md §1](REFERENCE.md#1-xrd-anatomy).
 4. **Write the Composition** — `apiextensions.crossplane.io/v1` (the only Composition version that exists in v2), `mode: Pipeline`, with a `function-go-templating` step to render composed resources and a `function-auto-ready` step to mark readiness. See [REFERENCE.md §2](REFERENCE.md#2-composition-anatomy) and the [templating cheatsheet](REFERENCE.md#3-go-templating-cheatsheet).
 5. **Validate locally** before committing:
-   - `crossplane render xr.yaml composition.yaml functions.yaml` to preview what the function pipeline produces. Install crossplane CLI from [crossplane/docs](https://docs.crossplane.io/v2.3/cli/).
+   - `./scripts/render.sh xr.yaml composition.yaml functions.yaml` to preview what the function pipeline produces. The script pins `--crossplane-version=v2.3.1` because `crossplane render` defaults to v1.x and rejects the v2 XRD schema. Install crossplane CLI from [crossplane/docs](https://docs.crossplane.io/v2.3/cli/).
    - `kubectl apply --dry-run=client -f <file>` to confirm schema and required fields parse.
    - `kubeconform -summary <file>` (or your usual yaml linter) for the rest.
 6. **Commit to Git, let GitOps sync.** Push the XRD and Composition (and an XR sample if you want) to the repo your GitOps controller watches. After the sync, read the live state with:
