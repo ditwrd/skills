@@ -124,6 +124,7 @@ For cross-resource dependencies (B reads A's status), add a second `function-go-
 - `references/composition-patterns.md` — multi-resource dependency (§4.1), connection secrets (§4.2), region/multi-account (§4.3), optional resources (§4.4), status conditions (§4.5), cross-XR references (§4.6)
 - `references/mrd-discovery.md` — finding and inspecting provider-aws MRDs, activating Inactive CRDs, `kubectl explain`, marketplace links
 - `references/testing-with-xprin.md` — install, `.xprin.yaml` subcommand pin, two-reconcile test pattern, cp-hook for capturing rendered output, gotchas
+- `references/module-folder-structure.md` — the canonical module layout (`modules/aws/<thing>/` + `tests/`), the TDD workflow for a new module, what NOT to do (no per-module `functions/`, no absolute paths, no `out.yaml` hand-rolled)
 - `references/common-gotchas.md` — top-level validation gotchas (v1/v2 API rules, external-name, secret guards, MRD state)
 - `EXAMPLES.md` — two complete copy-pastable AWS composites: **XNetwork** (VPC + public/private subnets + IGW + route tables + associations) and **XPostgres** (RDS instance with security group, subnet group, generated-password Secret, and a composed connection Secret)
 - `scripts/render.sh <xr.yaml> <composition.yaml> <functions.yaml>` — `crossplane render --crossplane-version=v2.3.1` wrapper. The version pin is required; without it the engine inside Docker mismatches the host CLI on v2 XRD schema.
