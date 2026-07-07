@@ -1,6 +1,6 @@
 ---
 name: c4-documents-skill
-description: Generates C4 architecture documentation for any codebase: 6 markdown files (Overview, Architecture, Workflow, Deep-Exploration modules, Boundary Interfaces, Database Overview). Use when the user asks to "create C4 architecture diagrams", "document a repository", "generate project documentation", "auto-generate documentation", or "analyze codebase architecture". Pure agent reasoning + tool calls — no external binary required.
+description: Generates C4 architecture documentation for any codebase
 version: 3.0.0
 ---
 
