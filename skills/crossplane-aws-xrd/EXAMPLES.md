@@ -178,38 +178,50 @@ spec:
         kind: GoTemplate
         source: Inline
         inline:
+          # v0.12.x: the observe step must emit a `kind: Result` Kubernetes
+          # resource (not a bare YAML object). Every resource rendered by a
+          # step also needs the `gotemplating.fn.crossplane.io/composition-
+          # resource-name` annotation so the function can key it in
+          # .observed.resources for downstream steps.
           template: |
+            ---
+            apiVersion: internal.crossplane.io/v1beta1
+            kind: Result
+            metadata:
+              name: observe
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: observe
             status:
               vpcId: {{ dig "status" "atProvider" "vpcId" "" .observed.resources.vpc }}
               publicSubnetId:  {{ dig "status" "atProvider" "subnetId" "" .observed.resources.public }}
               privateSubnetId: {{ dig "status" "atProvider" "subnetId" "" .observed.resources.private }}
               ready: {{ and
-                  (dig "status" "conditions" "Ready" "status" "False" .observed.resources.vpc | eq "True" | not)
-                  (dig "status" "conditions" "Ready" "status" "False" .observed.resources.public | eq "True" | not)
-                  (dig "status" "conditions" "Ready" "status" "False" .observed.resources.private | eq "True" | not)
+                  (eq (dig "status" "conditions" "Ready" "status" "False" .observed.resources.vpc) "True")
+                  (eq (dig "status" "conditions" "Ready" "status" "False" .observed.resources.public) "True")
+                  (eq (dig "status" "conditions" "Ready" "status" "False" .observed.resources.private) "True")
               }}
-            conditions:
-              - type: Ready
-                status: "{{ if (and
-                    (dig "status" "conditions" "Ready" "status" "False" .observed.resources.vpc | eq "True" | not)
-                    (dig "status" "conditions" "Ready" "status" "False" .observed.resources.public | eq "True" | not)
-                    (dig "status" "conditions" "Ready" "status" "False" .observed.resources.private | eq "True" | not)
-                  ) }}True{{ else }}False{{ end }}"
-                reason: Available
-                message: "vpc and subnets are ready"
-              - type: Synced
-                status: "True"
-                reason: ReconcileSuccess
-            connectionDetails:
-              vpcId:
-                type: FromValue
-                fromValuePath: status.vpcId
-              publicSubnetId:
-                type: FromValue
-                fromValuePath: status.publicSubnetId
-              privateSubnetId:
-                type: FromValue
-                fromValuePath: status.privateSubnetId
+              conditions:
+                - type: Ready
+                  status: "{{ if (and
+                      (eq (dig "status" "conditions" "Ready" "status" "False" .observed.resources.vpc) "True")
+                      (eq (dig "status" "conditions" "Ready" "status" "False" .observed.resources.public) "True")
+                      (eq (dig "status" "conditions" "Ready" "status" "False" .observed.resources.private) "True")
+                    ) }}True{{ else }}False{{ end }}"
+                  reason: Available
+                  message: "vpc and subnets are ready"
+                - type: Synced
+                  status: "True"
+                  reason: ReconcileSuccess
+              connectionDetails:
+                vpcId:
+                  type: FromValue
+                  fromValuePath: status.vpcId
+                publicSubnetId:
+                  type: FromValue
+                  fromValuePath: status.publicSubnetId
+                privateSubnetId:
+                  type: FromValue
+                  fromValuePath: status.privateSubnetId
 ```
 
 ### Claim
@@ -368,27 +380,36 @@ spec:
         kind: GoTemplate
         source: Inline
         inline:
+          # v0.12.x: observe step emits a `kind: Result` resource. See
+          # Example 1 above for the full pattern + why the annotation is required.
           template: |
+            ---
+            apiVersion: internal.crossplane.io/v1beta1
+            kind: Result
+            metadata:
+              name: observe
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: observe
             status:
               endpoint: {{ dig "status" "atProvider" "endpoint" "" .observed.resources.pg }}
               ready: {{ eq (dig "status" "atProvider" "instanceStatus" "" .observed.resources.pg) "available" }}
-            conditions:
-              - type: Ready
-                status: "{{ if eq (dig "status" "atProvider" "instanceStatus" "" .observed.resources.pg) "available" }}True{{ else }}False{{ end }}"
-                reason: "{{ if eq (dig "status" "atProvider" "instanceStatus" "" .observed.resources.pg) "available" }}Available{{ else }}Creating{{ end }}"
-              - type: Synced
-                status: "True"
-                reason: ReconcileSuccess
-            connectionDetails:
-              endpoint:
-                type: FromValue
-                fromValuePath: status.endpoint
-              username:
-                type: FromValue
-                fromValuePath: status.atProvider.masterUsername
-              password:
-                type: FromConnectionSecretKey
-                fromConnectionSecretKey: masterUserPassword
+              conditions:
+                - type: Ready
+                  status: "{{ if eq (dig "status" "atProvider" "instanceStatus" "" .observed.resources.pg) "available" }}True{{ else }}False{{ end }}"
+                  reason: "{{ if eq (dig "status" "atProvider" "instanceStatus" "" .observed.resources.pg) "available" }}Available{{ else }}Creating{{ end }}"
+                - type: Synced
+                  status: "True"
+                  reason: ReconcileSuccess
+              connectionDetails:
+                endpoint:
+                  type: FromValue
+                  fromValuePath: status.endpoint
+                username:
+                  type: FromValue
+                  fromValuePath: status.atProvider.masterUsername
+                password:
+                  type: FromConnectionSecretKey
+                  fromConnectionSecretKey: masterUserPassword
 ```
 
 ### Claim

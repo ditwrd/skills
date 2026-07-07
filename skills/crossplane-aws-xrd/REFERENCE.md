@@ -262,3 +262,10 @@ Crossplane official docs referenced for this skill:
 - `connectionDetails` references a path that does not exist on the MR? The XR will not publish a secret. `kubectl describe` will show no error; check the `connectionDetails` block of the XR.
 - `crossplane.io/external-name` missing? Resource will be recreated on every reconcile. Always set it from a stable claim field.
 - Indentation off by one space inside the `template: |`? YAML will parse but resources will have wrong fields. Render the template to a file and `kubectl apply --dry-run=client -f -` to validate.
+
+### function-go-templating v0.12.x specifics
+
+- **Observe step must emit a `kind: Result` Kubernetes resource**, not a bare YAML object. The template body is one or more `---`-separated manifests; the observe step produces a single `apiVersion: internal.crossplane.io/v1beta1, kind: Result` whose `.status` carries the conditions, connection details, and any status fields you want on the XR. Older guides show a bare `status: ... conditions: ... connectionDetails: ...` object — that form fails to parse in v0.12.x with `Object 'Kind' is missing`.
+- **Every rendered resource needs the `gotemplating.fn.crossplane.io/composition-resource-name` annotation** set to a stable, unique key. Downstream steps read it via `.observed.resources.<key>`. The function renames this to `crossplane.io/composition-resource-name` in the output, but the input annotation key is the long form.
+- **`.observed.resources` is `nil` on the first reconcile.** `index .observed.resources $key` panics with "index of untyped nil" on the first pass. Guard with `with`: `{{ with .observed.resources }}{{ with index . $key }}{{ dig "status" "atProvider" "arn" "" . }}{{ end }}{{ end }}`. Use this pattern when reading outputs of resources rendered in a prior step.
+- **`ready: <boolean>` is a status field, not a condition.** Set both. The function-go-templating v0.12.x function's `Result` resource needs `status.ready` AND `status.conditions[].type=Ready,status=True/False` for the XR to report readiness correctly.

@@ -1,6 +1,6 @@
 ---
 name: crossplane-aws-xrd
-description: Author Crossplane CompositeResourceDefinitions (XRDs) and Compositions for AWS using provider-upjet-aws and function-go-templating. Use when creating new crossplane claim APIs, writing `CompositeResourceDefinition` YAML, writing `Composition` YAML with `function-go-templating`, building multi-resource AWS composites (VPC+RDS, S3+policy), or discovering installed provider-aws CRD fields.
+description: Authors Crossplane CompositeResourceDefinitions (XRDs) and Compositions for AWS using provider-upjet-aws and function-go-templating. Use when creating a new crossplane claim API, writing a `CompositeResourceDefinition` or `Composition` with `function-go-templating`, building a multi-resource AWS composite (VPC+RDS, S3+policy), or discovering the schema of an installed provider-aws CRD.
 ---
 
 # Crossplane AWS XRD
@@ -29,7 +29,7 @@ Author XRDs and Compositions for AWS. Artifacts are committed to Git and synced 
 ## Hard rules
 
 - Use `mode: Pipeline` with `function-go-templating`. Do not use patch-and-transform + env vars style.
-- One render-resources step, one observe-and-report-readiness step. Optionally one resolve-connection-secret step.
+- One render-resources step, one observe-and-report-readiness step. Optionally one resolve-connection-secret step. If a composed resource needs an observed output of another (e.g. an SQS QueuePolicy reading the queue's ARN), split render into two steps: render the producer first, then render the dependent in a second step that reads `.observed.resources`. See REFERENCE.md §4.1.
 - Always set composite `conditions` explicitly in the observe step. Do not rely on auto-detection from readiness alone.
 - The function-go-templating input is `apiVersion: gotemplating.fn.crossplane.io/v1beta1, kind: GoTemplate, source: Inline, inline.template: | ...`. The template body must be valid YAML for the rendered resources.
 
