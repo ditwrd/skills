@@ -33,6 +33,7 @@ This is the #1 thing that will burn you on your first composition. It looks like
    - `scripts/render.sh xr.yaml composition.yaml functions.yaml` — one-off preview (pins `--crossplane-version=v2.3.1` because `crossplane render` defaults to v1.x and rejects the v2 XRD schema).
    - `kubectl apply --dry-run=client -f <file>` to confirm schema and required fields parse.
    - Before running xprin, check `.xprin.yaml` exists at the repo root with the correct `subcommands.render` and `subcommands.validate` pins (`--crossplane-version=v2.3.1`). Without this, xprin v0.2 invokes `crossplane internal render` internally but the crossplane CLI v2.3.x has no `internal` subcommand, producing `unexpected argument internal`. See [references/testing-with-xprin.md pin section](references/testing-with-xprin.md).
+   - Use `make test` (or `make test MODULES=modules/aws/<module>`) to run all xprin suites via the repo Makefile, which pins `--config-file .xprin.yaml` by construction. This avoids accidentally falling back to `~/.config/xprin.yaml`. See [references/makefile-test.md](references/makefile-test.md) for the canonical Makefile shape.
 5. **Commit to Git, let GitOps sync.** After sync, read live state with `kubectl get <xrd-kind> -A`, `kubectl describe <xr> -n <ns>`, and `kubectl get managed` to see what got rendered.
 6. **Iterate** — if the XR hangs, read `status.conditions` on the XR and the failing MR. A missing readiness check, a missing `observed.resources` nil-guard, or the trim-collapse bug in §0 is the usual culprit.
 
@@ -122,9 +123,10 @@ For cross-resource dependencies (B reads A's status), add a second `function-go-
 - `references/go-templating-cheatsheet.md` — context fields, Sprig helpers, custom built-in helpers from `function_maps.go`, common gotchas (incl. trim-collapse), cross-resource status writes
 - `references/composition-patterns.md` — multi-resource dependency (§4.1), connection secrets (§4.2), region/multi-account (§4.3), optional resources (§4.4), status conditions (§4.5), cross-XR references (§4.6)
 - `references/mrd-discovery.md` — finding and inspecting provider-aws MRDs, activating Inactive CRDs, `kubectl explain`, marketplace links
-- `references/testing-with-xprin.md` — install, `.xprin.yaml` subcommand pin, two-reconcile test pattern, cp-hook for capturing rendered output, gotchas
+- `references/testing-with-xprin.md` — install, `.xprin.yaml` subcommand pin, two-reconcile test pattern, FieldExists/FieldValue assertion coverage, cp-hook for capturing rendered output, gotchas
 - `references/module-folder-structure.md` — the canonical module layout (`modules/aws/<thing>/` + `tests/`), the TDD workflow for a new module, what NOT to do (no per-module `functions/`, no absolute paths, no `out.yaml` hand-rolled)
 - `references/common-gotchas.md` — top-level validation gotchas (v1/v2 API rules, external-name, secret guards, MRD state)
 - `EXAMPLES.md` — two complete copy-pastable AWS composites: **XNetwork** (VPC + public/private subnets + IGW + route tables + associations) and **XPostgres** (RDS instance with security group, subnet group, generated-password Secret, and a composed connection Secret)
 - `scripts/render.sh <xr.yaml> <composition.yaml> <functions.yaml>` — `crossplane render --crossplane-version=v2.3.1` wrapper. The version pin is required; without it the engine inside Docker mismatches the host CLI on v2 XRD schema.
 - `scripts/get-crd-field.sh <crd-name> [jsonpath]` — quick look at an installed provider-aws CRD's OpenAPI schema.
+- `references/makefile-test.md` — Makefile `test` target shape, usage, and when to create it

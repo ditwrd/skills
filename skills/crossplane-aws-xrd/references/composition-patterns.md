@@ -46,6 +46,20 @@ data:
 
 `endpoint`/`username`/`password` are already base64 when read from `connectionDetails`, so the outer `| b64enc` is correct for putting them in a `Secret.data` field (which requires base64). If you instead read raw `status.atProvider.*` values, use `| b64enc` to encode them.
 
+**Alternative: use `stringData`** for raw values that aren't already base64. Kubernetes accepts `stringData` on Secret create/update and automatically encodes to `data`. This avoids manual `| b64enc` when reading from `status.atProvider` fields. Always emit the key with a default empty value to keep the Secret shape stable across reconciles:
+
+```yaml
+stringData:
+  # The toJson filter handles both empty and populated lists — produces
+  # [] on the first reconcile and ["url1", ...] on subsequent ones.
+  queueUrls: '{{ if ne $.observed.resources nil }}{{ $urls | toJson }}{{ end }}'
+```
+
+The inline guard (`{{ if ne $.observed.resources nil }}`) avoids panicking on the first reconcile when `$.observed.resources` is nil. The `toJson` of an empty Sprig `list` produces `[]`, so consumers always get valid JSON.
+
+When to use each: `data` + `| b64enc` for `connectionDetails` values (already base64). `stringData` for raw values from `status.atProvider.*` or computed Go template output. Do not mix — either all `data` or all `stringData` on a single Secret.
+
+
 ## 4.3 Region / multi-account
 
 Pass through to each MR's `forProvider.region`. If you want a default:

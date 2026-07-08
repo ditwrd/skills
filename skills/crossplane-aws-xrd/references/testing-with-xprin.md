@@ -112,6 +112,44 @@ xprin cannot test invalid XR inputs (missing required fields, wrong types) becau
 
 Each XR variant gets its own test fixture file (`example-xr-<variant>.yaml`) and, for multi-reconcile tests, its own observed-resources file (`observed-<resource>-<variant>.yaml`).
 
+## Assertion coverage: FieldExists + FieldValue
+
+**FieldExists** validates a field path exists on the rendered resource. Catches dropped fields — if a template accidentally omits `spec.path`, the assertion fails.
+**FieldValue** validates the field's value matches the expected string/number. Catches wrong values — if a template variable resolves to the wrong name or a typo, the assertion fails.
+
+Use **both** together for MECE (Mutually Exclusive, Collectively Exhaustive) coverage. Neither alone is sufficient: `FieldExists` passes for a field with a garbage value; `FieldValue` panics (not fails) if the entire field is missing — the operator can't compare against nil.
+
+```yaml
+assertions:
+  xprin:
+    # Existence — would catch spec.path being absent from the template
+    - name: "VaultStaticSecret has spec.path"
+      type: FieldExists
+      resource: "VaultStaticSecret/*"
+      field: "spec.path"
+
+    # Value — catches spec.path resolving to the wrong vault path
+    - name: "VaultStaticSecret path correct"
+      type: FieldValue
+      resource: "VaultStaticSecret/port-vso-secret-myapp-prod-db"
+      field: "spec.path"
+      operator: "=="
+      value: "myapp/prod/db"
+```
+
+Rules of thumb:
+- Use `FieldExists` with wildcard patterns (`Policy/*`, `VaultStaticSecret/*`) to guard every resource of a kind.
+- Use `FieldValue` with **explicit resource names** when each resource has a different expected value. Use wildcards only when all matched resources share the same value.
+- `FieldExists` without a subsequent `FieldValue` is a regression guard for field removal; `FieldValue` without `FieldExists` crashes on nil. Pair them.
+#### Relative path depth for functions
+
+From a test file at `tests/`, the path to `provider/function.yaml` at repo root:
+- `modules/aws/<thing>/tests/` → 4 levels up → `../../../../provider/function.yaml`
+- `modules/vault/<thing>/tests/` → 4 levels up → `../../../../provider/function.yaml`
+
+Count the levels from the test file to repo root: each `/../` removes one directory segment. `tests/` → `<thing>/` → `<category>/` → `modules/` → repo root = 4. If you miscount, xprin fails with `functions file or dir not found` showing the resolved path — read that path to diagnose the depth.
+- For resources with auto-generated names (no explicit `metadata.name` in the template), use `FieldValue` with a wildcard pattern (`Policy/*`) — the assertion applies to every match.
+
 Pass 2's `observed-resources` is a synthetic YAML that mirrors what the provider would have observed after the underlying resources exist in AWS. Each entry needs:
 - The `crossplane.io/composition-resource-name: <key>` annotation matching what step 1 set via `setResourceNameAnnotation`
 - `status.atProvider.<field>` populated with the values step 2 expects to read
