@@ -13,7 +13,7 @@ make test MODULES=modules/aws/<module> # single module
 
 ```makefile
 # Crossplane module test runner.
-MODULES ?= modules/*
+MODULES ?= modules/*/*
 .PHONY: test
 test:
 	@for dir in $(MODULES); do \

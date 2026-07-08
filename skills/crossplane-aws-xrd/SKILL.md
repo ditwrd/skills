@@ -130,3 +130,4 @@ For cross-resource dependencies (B reads A's status), add a second `function-go-
 - `scripts/render.sh <xr.yaml> <composition.yaml> <functions.yaml>` — `crossplane render --crossplane-version=v2.3.1` wrapper. The version pin is required; without it the engine inside Docker mismatches the host CLI on v2 XRD schema.
 - `scripts/get-crd-field.sh <crd-name> [jsonpath]` — quick look at an installed provider-aws CRD's OpenAPI schema.
 - `references/makefile-test.md` — Makefile `test` target shape, usage, and when to create it
+- `references/generating-readmes.md` — generating READMEs with `crossplane-docs`, fixing multiline table cells
