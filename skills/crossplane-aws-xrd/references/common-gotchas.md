@@ -1,6 +1,11 @@
 # Common gotchas
 
-- **Trim-collapse bug** — `{{-` on its own line eats the preceding newline via the `{{-` left-trim. For YAML keys with list values, the parent key and the first list item collapse onto one line; the k8s.io decoder rejects with `block sequence entries are not allowed in this context` or `mapping values are not allowed in this context`. The error is reported against the *parent* key (`queue: - id: ...`), not the range directive — confusing. Two fixes: inline the range (`queue: {{ range $i, $q := $queues }}`), or use `{{ range }}` / `{{ end }}` (no trim) on its own line and accept the extra blank lines (decoder ignores them). Same trap for `{{- if $x }}` on filter/mapping lines where the indent carries the key: drop the left-trim, use `{{ if $x }}`. **Read SKILL.md §0 first — this is the #1 thing that will burn you on your first composition.**
+- **Trim-collapse bug** — `{{-` on its own line eats the preceding newline via the left-trim. For YAML keys with list values, the parent key and the first list item collapse onto one line; the k8s.io decoder rejects with `block sequence entries are not allowed in this context` or `mapping values are not allowed in this context`. The error is reported against the *parent* key (`queue: - id: ...`), not the range directive — confusing.
+  **Primary fix: drop the left-trim** — use `{{ range }}` / `{{ end }}` (no `-`).
+  **Secondary (can fail):** inline (`queue: {{ range $i, $q := $queues }}`) — the Go template parser may reject with `missing value for range`.
+  **Filter lines:** drop `{{-` from `{{- if $x }}` before filter/mapping keys.
+  **Data-block collapse:** precompute before the block, not between key and value.
+  Read SKILL.md §0 for the full detail.
 - **XRD is `apiextensions.crossplane.io/v2`** with `scope: Namespaced` (or `Cluster`). If you set `claimNames` or `connectionSecretKeys` outside `LegacyCluster` scope, the v2 XRD rejects the field.
 - **Composition is `apiextensions.crossplane.io/v1`** (the only version that exists). Don't try `apiextensions.crossplane.io/v2` for the Composition.
 - **Every composed resource needs `setResourceNameAnnotation "key"`.** Without it, the function either rejects the resource (in newer versions) or mis-routes it as a status update on the XR.

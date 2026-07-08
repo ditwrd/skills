@@ -96,7 +96,21 @@ tests:
         - { type: Count, value: 2, resource: "QueuePolicy/*" }     # step 2 emits
         - { type: Exists, resource: "BucketNotification/*" }
         - { type: Exists, field: "data.queueUrls", resource: "Secret/*" }
-```
+
+## Test coverage patterns
+
+For a composition that handles optional fields and defaults, structure tests around the branches the template actually evaluates:
+
+| Pattern | What it exercises | Example |
+|---|---|---|
+| **Happy path (defaults)** | Composition with all optional fields omitted — confirms defaults work. | No `queues` field → single default queue renders. |
+| **Happy path (all features)** | Composition with every optional field set. | Multiple queues with prefix, suffix, debug flags. |
+| **Edge cases** | Boundary values that change template behaviour. | Empty array (defaulted to single), single-element array, many elements. |
+| **Two-reconcile cycle** | Every XR variant needs pass 1 (no observed state) + pass 2 (synthetic observed state). | Without pass 1 you miss nil-guard bugs; without pass 2 you never see dependent resources. |
+
+xprin cannot test invalid XR inputs (missing required fields, wrong types) because it runs the composition pipeline against the XR — `kubectl apply --dry-run=client` handles schema validation. Keep XR validation separate; xprin tests the *composition*, not the XRD schema.
+
+Each XR variant gets its own test fixture file (`example-xr-<variant>.yaml`) and, for multi-reconcile tests, its own observed-resources file (`observed-<resource>-<variant>.yaml`).
 
 Pass 2's `observed-resources` is a synthetic YAML that mirrors what the provider would have observed after the underlying resources exist in AWS. Each entry needs:
 - The `crossplane.io/composition-resource-name: <key>` annotation matching what step 1 set via `setResourceNameAnnotation`

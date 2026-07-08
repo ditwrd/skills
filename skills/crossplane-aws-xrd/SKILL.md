@@ -1,7 +1,7 @@
 ---
 name: crossplane-aws-xrd
 description: >
-  Crossplane v2. Authors CompositeResourceDefinitions (XRDs) and Compositions
+  Authors Crossplane v2 CompositeResourceDefinitions (XRDs) and Compositions
   for AWS using provider-upjet-aws with function-go-templating and
   function-auto-ready. Use when writing a v2 CompositeResourceDefinition,
   a Composition pipeline using function-go-templating plus function-auto-ready,
@@ -19,25 +19,24 @@ Author v2 XRDs and Compositions for AWS. Artifacts are committed to Git and sync
 This is the #1 thing that will burn you on your first composition. It looks like whitespace; it's structural. The k8s.io decoder fails the *parent* key, not the template directive, so the error message is misleading.
 
 - **`{{-` on its own line eats the preceding newline via the `{{-` left-trim.** If `{{- range }}` or `{{- if }}` is on its own line, the left-trim removes the newline between it and the line above. For YAML keys with list values, the parent key and the first list item collapse onto one line and the k8s.io decoder rejects with `block sequence entries are not allowed in this context` or `mapping values are not allowed in this context`. The error is reported against the *parent* key (`queue: - id: ...`), not the range directive — confusing.
-- **Two fixes.** Either inline the range on the same line as the parent key (`queue: {{ range $i, $q := $queues }}`), or use `{{ range ... }}` / `{{ end }}` (no trim) on its own line and accept the extra blank lines — the decoder ignores them.
-- **Same trap for `{{- if $x }}` on filter/mapping lines** where the indent carries the key into the surrounding structure (e.g. `filterSuffix:`). Drop the left-trim and use `{{ if $x }}` so the indent is preserved. The closing `{{- end }}` is fine.
-
-Full reference and other gotchas (`.observed.resources` nil on first reconcile, `dig` paths, `connectionDetails` base64) are in [references/go-templating-cheatsheet.md](references/go-templating-cheatsheet.md) and [references/common-gotchas.md](references/common-gotchas.md).
+- **Primary fix: drop the left-trim.** Use `{{ range $i, $q := $queues }}` / `{{ end }}` (no `-`) on its own line. The blank lines between the parent key and the first list item are valid YAML — the decoder ignores them. This is the safest fix.
+- **Secondary fix (use with care):** Inline the range on the same line as the parent key (`queue: {{ range $i, $q := $queues }}`). **This can fail** with `missing value for range` from the Go template parser when the range pipeline is complex (e.g. inside a `with` block, or when the variable was set by a `default` function call). If you hit this error, use the primary fix.
+- **Data-block collapse:** Same trap for non-emitting template directives (variable assignments, `range` that only produces side effects, `if` without inline value) between a YAML key and its value. `{{- $urls := list }}` between `data:` and `queueUrls:` eats the newlines and collapses both keys onto one line: `data:queueUrls: ...`. **Fix:** precompute values before the `data:` block, then emit the block with no intermediate directives. See [references/go-templating-cheatsheet.md](references/go-templating-cheatsheet.md) data-block pattern.
+- **Filter/mapping lines:** Same trap for `{{- if $x }}` on filter or mapping lines (e.g. `filterSuffix:`). Drop the left-trim — `{{ if $x }}` preserves the blank line. The closing `{{- end }}` is fine.
 
 ## Workflow
 
 1. **Find the managed resource** for the AWS service. Namespaced v2 MRs are `<service>.aws.m.upbound.io/v1beta1` (e.g. `ec2.aws.m.upbound.io/v1beta1`). Discovery: `kubectl get mrd`, `kubectl explain`, or the marketplace at <https://marketplace.upbound.io/providers/upbound/provider-family-aws/latest/managed-resources>. Schema dump: `scripts/get-crd-field.sh <crd>`.
-2. **Design the XR schema** — required fields sparingly, prefer arrays over scalars, avoid booleans, leave room for engine variants. See [references/xrd-anatomy.md claim rules](references/xrd-anatomy.md).
+2. **Design the XR schema** — required fields sparingly, prefer arrays over scalars, prefer enums over booleans (except for debug/feature toggles), leave room for engine variants. See [references/xrd-anatomy.md claim rules](references/xrd-anatomy.md).
 3. **Write the XRD** (`apiextensions.crossplane.io/v2`, `scope: Namespaced`) and the **Composition** (`apiextensions.crossplane.io/v1`, `mode: Pipeline`) — see §1 and §2 below. For full pipeline anatomy and function constraints, see [references/composition-anatomy.md](references/composition-anatomy.md).
 4. **Validate locally** before committing:
    - `scripts/render.sh xr.yaml composition.yaml functions.yaml` — one-off preview (pins `--crossplane-version=v2.3.1` because `crossplane render` defaults to v1.x and rejects the v2 XRD schema).
-   - `xprin test tests/module_xprin.yaml` — declarative assertions, golden-file diffs, hooks, CI output. See [references/testing-with-xprin.md](references/testing-with-xprin.md).
    - `kubectl apply --dry-run=client -f <file>` to confirm schema and required fields parse.
+   - Before running xprin, check `.xprin.yaml` exists at the repo root with the correct `subcommands.render` and `subcommands.validate` pins (`--crossplane-version=v2.3.1`). Without this, xprin v0.2 invokes `crossplane internal render` internally but the crossplane CLI v2.3.x has no `internal` subcommand, producing `unexpected argument internal`. See [references/testing-with-xprin.md pin section](references/testing-with-xprin.md).
 5. **Commit to Git, let GitOps sync.** After sync, read live state with `kubectl get <xrd-kind> -A`, `kubectl describe <xr> -n <ns>`, and `kubectl get managed` to see what got rendered.
 6. **Iterate** — if the XR hangs, read `status.conditions` on the XR and the failing MR. A missing readiness check, a missing `observed.resources` nil-guard, or the trim-collapse bug in §0 is the usual culprit.
 
 ## Hard rules
-
 - **XRD `apiVersion: apiextensions.crossplane.io/v2`** with `scope: Namespaced` (or `Cluster`). No `claimNames`, no `connectionSecretKeys` — both v1-only and rejected by v2 outside `scope: LegacyCluster`.
 - **Composition `apiVersion: apiextensions.crossplane.io/v1`** (the only Composition version that exists in v2) with `mode: Pipeline`. `mode: Resources` (native patch-and-transform) is gone.
 - **Pipeline must end with `function-auto-ready`**. Render step(s) precede it. The standard 2-step shape is render-then-auto-ready; for cross-resource dependencies, split into multiple render steps — see [references/composition-patterns.md §4.1](references/composition-patterns.md).

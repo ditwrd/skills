@@ -45,7 +45,7 @@ Key v2 points:
 ## Claim schema design rules
 
 - **Required fields sparingly** — once a field is required in a published version you cannot remove it. Prefer optional with a `default`.
-- **Avoid booleans** — they box you in. Use a string enum (`speed: Regular | Fast | Slow`) so you can add values without a new version.
+- **Prefer enums over booleans** — booleans box you in. For API evolution, a string enum (`speed: Regular | Fast | Slow`) lets you add values without a new version. Exception: debug toggles and simple feature flags (`debug: true`) are fine as booleans — they are binary by nature and won't grow new values.
 - **Prefer arrays over scalars** — if `spec.widget: "foo"` might become `spec.widgets: ["foo", "bar"]` later, start with the array. A single-element array is fine; an array you can extend is much cheaper than a breaking version bump.
 - **Leave room for variants** — if you might support MySQL *and* PostgreSQL under one XR, put engine-specific fields in nested objects (`spec.postgresql`, `spec.mysql`) toggled by a top-level `spec.engine` enum. Avoid a flat schema that needs you to add top-level fields per engine.
 - **Versions are not a magic escape hatch** — two CRD versions are two views into the same data, and they must round-trip. You can rename or move fields; you cannot drop a previously required field, or add a new required field, without breaking older XRs. Invest in backward-compatible evolution instead of new versions.
