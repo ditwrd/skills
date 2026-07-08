@@ -65,6 +65,8 @@ mycomp/
     s3-nq_xprin.yaml             # functions: ../functions/
 ```
 
+**Relative path depth for `functions:`** — from a test file at `tests/`, count directory segments to repo root. Each `/../` removes one segment: `tests/` → `<thing>/` → `<category>/` → `modules/` → repo root = 4. Always use `../../../../provider/function.yaml` regardless of `modules/aws/` vs `modules/vault/`. Miscount and xprin fails with `functions file or dir not found` — the error message shows the resolved path to diagnose the depth.
+
 ## Two-reconcile test pattern
 
 For compositions where step 2+ reads `$.observed.resources` from step 1, one test pass is not enough — step 2's nil-guard fires on the first reconcile and you never see the dependent resources emit. Use two test cases that mirror the two reconciles:
@@ -141,13 +143,6 @@ Rules of thumb:
 - Use `FieldExists` with wildcard patterns (`Policy/*`, `VaultStaticSecret/*`) to guard every resource of a kind.
 - Use `FieldValue` with **explicit resource names** when each resource has a different expected value. Use wildcards only when all matched resources share the same value.
 - `FieldExists` without a subsequent `FieldValue` is a regression guard for field removal; `FieldValue` without `FieldExists` crashes on nil. Pair them.
-#### Relative path depth for functions
-
-From a test file at `tests/`, the path to `provider/function.yaml` at repo root:
-- `modules/aws/<thing>/tests/` → 4 levels up → `../../../../provider/function.yaml`
-- `modules/vault/<thing>/tests/` → 4 levels up → `../../../../provider/function.yaml`
-
-Count the levels from the test file to repo root: each `/../` removes one directory segment. `tests/` → `<thing>/` → `<category>/` → `modules/` → repo root = 4. If you miscount, xprin fails with `functions file or dir not found` showing the resolved path — read that path to diagnose the depth.
 - For resources with auto-generated names (no explicit `metadata.name` in the template), use `FieldValue` with a wildcard pattern (`Policy/*`) — the assertion applies to every match.
 
 Pass 2's `observed-resources` is a synthetic YAML that mirrors what the provider would have observed after the underlying resources exist in AWS. Each entry needs:
