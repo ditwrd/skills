@@ -50,13 +50,12 @@ data:
 
 ```yaml
 stringData:
-  # The toJson filter handles both empty and populated lists — produces
-  # [] on the first reconcile and ["url1", ...] on subsequent ones.
-  queueUrls: '{{ if ne $.observed.resources nil }}{{ $urls | toJson }}{{ end }}'
+{{ range $i, $queue := $queues }}
+  queueUrls-{{ $i }}: {{ dig "status" "atProvider" "url" "" (index $.observed.resources "queue-{{ $i }}") }}
+{{ end }}
 ```
 
-The inline guard (`{{ if ne $.observed.resources nil }}`) avoids panicking on the first reconcile when `$.observed.resources` is nil. The `toJson` of an empty Sprig `list` produces `[]`, so consumers always get valid JSON.
-
+**Never use `toJson` on a list inside `stringData`.** `toJson` produces a JSON array (`["url1","url2"]`) that Crossplane's typed patch reinterprets as `[]interface{}` instead of a string, failing with `expected string, got array`. Use individual keys per queue index or `join ","` to produce a scalar string.
 When to use each: `data` + `| b64enc` for `connectionDetails` values (already base64). `stringData` for raw values from `status.atProvider.*` or computed Go template output. Do not mix — either all `data` or all `stringData` on a single Secret.
 
 

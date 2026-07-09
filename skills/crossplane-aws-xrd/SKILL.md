@@ -1,13 +1,14 @@
 ---
 name: crossplane-aws-xrd
 description: >
-  Authors Crossplane v2 CompositeResourceDefinitions (XRDs) and Compositions
+  Creates Crossplane v2 CompositeResourceDefinitions (XRDs) and Compositions
   for AWS using provider-upjet-aws with function-go-templating and
-  function-auto-ready. Use when writing a v2 CompositeResourceDefinition,
-  a Composition pipeline using function-go-templating plus function-auto-ready,
-  a multi-resource AWS composite (VPC+EC2, S3+IAM, S3+notification-queue),
-  discovering the schema of an installed provider-aws ManagedResourceDefinition,
-  or testing a Composition locally with xprin.
+  function-auto-ready. Use when creating or updating a Crossplane module for an
+  AWS service, writing a v2 CompositeResourceDefinition,
+  writing a Composition pipeline using function-go-templating plus
+  function-auto-ready, building a multi-resource AWS composite (VPC+EC2,
+  S3+IAM, S3+notification-queue), discovering the schema of an installed
+  provider-aws ManagedResourceDefinition, or testing locally with xprin.
 ---
 
 # Crossplane v2 + AWS compositions
@@ -43,8 +44,9 @@ This is the #1 thing that will burn you on your first composition. It looks like
 - **Pipeline must end with `function-auto-ready`**. Render step(s) precede it. The standard 2-step shape is render-then-auto-ready; for cross-resource dependencies, split into multiple render steps — see [references/composition-patterns.md §4.1](references/composition-patterns.md).
 - **Every composed resource needs `{{ setResourceNameAnnotation "key" }}`** so downstream steps and `function-auto-ready` can find it. Missing annotation → resource is treated as a status update on the XR.
 - **`.observed.resources` is nil on first reconcile** — guard with `{{ if eq $.observed.resources nil }}` and use `(index $.observed.resources "key")` (not `.observed.resources.key`, which panics on nil).
-- **Composed `Secret` for connection details** — `connectionSecretKeys` is gone in v2. Emit a `Secret` resource with `{{ setResourceNameAnnotation "connection-secret" }}` and a nil-guard on the first reconcile. See [references/composition-patterns.md §4.2](references/composition-patterns.md).
 - **Use the namespaced CRD group** `<service>.aws.m.upbound.io/v1beta1` (e.g. `ec2.aws.m.upbound.io/v1beta1`). The legacy `<service>.aws.upbound.io` is for v1 cluster-scoped resources.
+- **`providerConfigRef` MUST include `kind: ProviderConfig`** — Upbound providers in Crossplane v2 require it. Missing `kind` fails with `spec.providerConfigRef.kind: Required value`.
+- **Composed `Secret` for connection details** — `connectionSecretKeys` is gone in v2. Emit a `Secret` resource with `{{ setResourceNameAnnotation "connection-secret" }}` and a nil-guard on the first reconcile. `stringData` values MUST be string scalars — `toJson` on a list produces a JSON array that Crossplane's typed patch reinterprets as `[]interface{}`, failing with `expected string, got array`. Use individual keys (`queueUrls-<name>`) or `join` to produce a scalar. See [references/composition-patterns.md §4.2](references/composition-patterns.md).
 - **Deterministic names** — set `metadata.name` and `crossplane.io/external-name` on every composed resource from a stable field on the XR. Random names break re-render diffing and `resourceRefs`.
 
 ## §1 XRD (v2) — minimal shape
@@ -110,6 +112,7 @@ spec:
                 region: {{ .observed.composite.resource.spec.region }}
               providerConfigRef:
                 name: default
+                kind: ProviderConfig
     - step: ready
       functionRef: {name: function-auto-ready}
 ```

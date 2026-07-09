@@ -21,7 +21,7 @@ make readme           # re-run after XRD changes
 The `scripts/generate-module-readmes.sh` runs `crossplane-docs` then applies this Python fix:
 
 ```python
-import os, re
+import os
 
 for root, dirs, files in os.walk('modules'):
     for fname in files:
@@ -34,10 +34,10 @@ for root, dirs, files in os.walk('modules'):
         in_table = False
         for line in lines:
             stripped = line.rstrip('\n')
-            if stripped.startswith('|---'):
+            if stripped.lstrip().startswith('|---'):
                 in_table = True
                 result.append(stripped)
-            elif in_table and stripped.startswith('|'):
+            elif in_table and stripped.lstrip().startswith('|'):
                 if '#' in stripped:
                     idx = stripped.find('#')
                     before = stripped[:idx].rstrip()
@@ -48,7 +48,7 @@ for root, dirs, files in os.walk('modules'):
                 else:
                     result.append(stripped)
                 in_table = False if not stripped.endswith('|') else True
-            elif in_table and stripped and not stripped.startswith('|') and not stripped.startswith('#'):
+            elif in_table and stripped and not stripped.lstrip().startswith('|') and not stripped.startswith('#'):
                 result[-1] += ' ' + stripped.lstrip()
             else:
                 in_table = False
