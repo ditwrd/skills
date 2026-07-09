@@ -74,7 +74,7 @@ providerConfigRef:
   name: {{ .observed.composite.resource.spec.providerConfigName }}
 ```
 
-In v2 the default `providerConfigRef` (when omitted on the MR) is `name: default, kind: ClusterProviderConfig`. v2 introduced a second kind, `ProviderConfig`, for namespaced setups — set `kind: ProviderConfig` explicitly when you want a namespaced config.
+For `*.m.upbound.io` providers, `ProviderConfig` is `Namespaced` scope and `ClusterProviderConfig` is cluster-scoped. Use `ClusterProviderConfig` when multiple namespaces need the same credentials (avoids the cross-namespace trap). Use `ProviderConfig` only when the ProviderConfig is in the same namespace as the managed resource. The `kind` field is required on every `providerConfigRef` — omitting it fails with `spec.providerConfigRef.kind: Required value`.
 
 ## 4.4 Optional resources
 

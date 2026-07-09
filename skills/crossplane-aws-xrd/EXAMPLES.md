@@ -81,6 +81,7 @@ spec:
                   Name: {{ .observed.composite.resource.metadata.name }}-vpc
               providerConfigRef:
                 name: default
+                kind: ClusterProviderConfig
             ---
             apiVersion: ec2.aws.m.upbound.io/v1beta1
             kind: Subnet
@@ -99,6 +100,7 @@ spec:
                   Name: {{ .observed.composite.resource.metadata.name }}-public
               providerConfigRef:
                 name: default
+                kind: ClusterProviderConfig
             ---
             apiVersion: ec2.aws.m.upbound.io/v1beta1
             kind: Subnet
@@ -116,6 +118,7 @@ spec:
                   Name: {{ .observed.composite.resource.metadata.name }}-private
               providerConfigRef:
                 name: default
+                kind: ClusterProviderConfig
             ---
             apiVersion: ec2.aws.m.upbound.io/v1beta1
             kind: InternetGateway
@@ -131,6 +134,7 @@ spec:
                   Name: {{ .observed.composite.resource.metadata.name }}-igw
               providerConfigRef:
                 name: default
+                kind: ClusterProviderConfig
             ---
             apiVersion: ec2.aws.m.upbound.io/v1beta1
             kind: RouteTable
@@ -149,6 +153,7 @@ spec:
                   Name: {{ .observed.composite.resource.metadata.name }}-public
               providerConfigRef:
                 name: default
+                kind: ClusterProviderConfig
             ---
             apiVersion: ec2.aws.m.upbound.io/v1beta1
             kind: RouteTableAssociation
@@ -163,6 +168,7 @@ spec:
                 routeTableId: {{ dig "status" "atProvider" "routeTableId" "" (index $.observed.resources "publicrt") }}
               providerConfigRef:
                 name: default
+                kind: ClusterProviderConfig
 
     - step: automatically-detect-ready-composed-resources
       functionRef:
@@ -289,6 +295,7 @@ spec:
                   Name: {{ .observed.composite.resource.metadata.name }}-rds-sg
               providerConfigRef:
                 name: default
+                kind: ClusterProviderConfig
             ---
             apiVersion: rds.aws.m.upbound.io/v1beta1
             kind: SubnetGroup
@@ -304,6 +311,7 @@ spec:
                 subnetIds: {{ toJson .observed.composite.resource.spec.subnetIds }}
               providerConfigRef:
                 name: default
+                kind: ClusterProviderConfig
             ---
             apiVersion: rds.aws.m.upbound.io/v1beta1
             kind: Instance
@@ -331,6 +339,7 @@ spec:
                 dbSubnetGroupName: {{ .observed.composite.resource.metadata.name }}-subnets
               providerConfigRef:
                 name: default
+                kind: ClusterProviderConfig
               writeConnectionSecretToRef:
                 name: {{ .observed.composite.resource.metadata.name }}-pg
                 namespace: crossplane-system

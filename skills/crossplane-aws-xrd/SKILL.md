@@ -45,9 +45,11 @@ This is the #1 thing that will burn you on your first composition. It looks like
 - **Every composed resource needs `{{ setResourceNameAnnotation "key" }}`** so downstream steps and `function-auto-ready` can find it. Missing annotation → resource is treated as a status update on the XR.
 - **`.observed.resources` is nil on first reconcile** — guard with `{{ if eq $.observed.resources nil }}` and use `(index $.observed.resources "key")` (not `.observed.resources.key`, which panics on nil).
 - **Use the namespaced CRD group** `<service>.aws.m.upbound.io/v1beta1` (e.g. `ec2.aws.m.upbound.io/v1beta1`). The legacy `<service>.aws.upbound.io` is for v1 cluster-scoped resources.
-- **`providerConfigRef` MUST include `kind: ProviderConfig`** — Upbound providers in Crossplane v2 require it. Missing `kind` fails with `spec.providerConfigRef.kind: Required value`.
+- **`providerConfigRef` MUST include `kind`** — missing `kind` fails with `spec.providerConfigRef.kind: Required value`. Use `kind: ClusterProviderConfig` (cluster-scoped, preferred) for most setups. Use `kind: ProviderConfig` (Namespaced) only when the ProviderConfig is in the same namespace as the managed resource. **Cross-namespace trap:** ProviderConfigs for `*.m.upbound.io` are `Namespaced` scope. If the managed resource is in namespace X and the ProviderConfig is in namespace Y, the provider can't find credentials — the MR gets `status: {}` with no conditions, and provider logs show "Calling the inner handler for Create event" but never progress. Fix: either add `namespace: <providerconfig-ns>` to `providerConfigRef`, or use `kind: ClusterProviderConfig` (cluster-scoped, no namespace boundary).
 - **Composed `Secret` for connection details** — `connectionSecretKeys` is gone in v2. Emit a `Secret` resource with `{{ setResourceNameAnnotation "connection-secret" }}` and a nil-guard on the first reconcile. `stringData` values MUST be string scalars — `toJson` on a list produces a JSON array that Crossplane's typed patch reinterprets as `[]interface{}`, failing with `expected string, got array`. Use individual keys (`queueUrls-<name>`) or `join` to produce a scalar. See [references/composition-patterns.md §4.2](references/composition-patterns.md).
-- **Deterministic names** — set `metadata.name` and `crossplane.io/external-name` on every composed resource from a stable field on the XR. Random names break re-render diffing and `resourceRefs`.
+- **Deterministic names** — set `metadata.name` and `crossplane.io/external-name` on every composed resource from a stable field on the XR. Also set `forProvider.name` when the CRD supports it — `external-name` is for Crossplane tracking only; upjet/terraform uses `forProvider.name` for the actual AWS resource name. Missing `forProvider.name` causes terraform to auto-generate a random resource name. Random names break re-render diffing and `resourceRefs`.
+- **Provider default tags cause SSA conflict loops** — upjet providers inject `crossplane-name`, `crossplane-providerconfig` into `forProvider.tags` on every reconcile. If the composition template omits them, the provider's Update races with the composition's SSA Apply: the provider writes tags → composition re-applies without them → provider's finalizer write fails with `Cannot add finalizer: object has been modified`. Generation climbs to 100+ with no resource created. **Fix:** include ALL provider default tags in every composition template (`crossplane-name`: the MR's metadata.name, `crossplane-providerconfig`: the providerConfig name). The `crossplane-kind` default (`<kind>.<group>`) can be overridden with a custom value if needed.
+- **Verify CRD schema before adding fields to templates** — unsupported fields cause the composition controller to reject the resource with `field not declared in schema`. Check with `kubectl get crd <resource-plural>.<group> -o yaml | grep -A 20 forProvider`. Common traps: `tags` is not supported on every resource (e.g. QueuePolicy, BucketNotification), and `bucket`/`bucketRef` is required on BucketNotification.
 
 ## §1 XRD (v2) — minimal shape
 
@@ -112,7 +114,7 @@ spec:
                 region: {{ .observed.composite.resource.spec.region }}
               providerConfigRef:
                 name: default
-                kind: ProviderConfig
+                kind: ClusterProviderConfig
     - step: ready
       functionRef: {name: function-auto-ready}
 ```
