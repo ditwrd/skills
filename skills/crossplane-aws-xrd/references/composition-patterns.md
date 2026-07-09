@@ -2,13 +2,18 @@
 
 ## 4.1 Multi-resource dependency
 
-When resource B needs an output of resource A, render A first and have B read A's output via `.observed.resources.a`. For AWS, this is common with:
-- VPC → Subnet (for the SubnetGroup) / RouteTable / SecurityGroup
-- SecurityGroup → every workload resource that needs ingress/egress rules
-- RDS Instance → SubnetGroup, SecurityGroup
+**Prefer a single render step with `*Ref` fields.** Crossplane resolves ordering via cross-resource references (queueUrlRef, queueArnRef, etc.) — resources that reference each other can emit together in one step. Use `.observed.resources` + `getResourceCondition` for conditional content (e.g. Deny→Allow policies based on readiness), never for emission gating:
 
-The pipeline runs all render steps before the observe step, so split render into multiple `function-go-templating` steps when there are dependencies:
+```yaml
+{{- $q := index $.observed.resources "queue-mine" }}
+{{- $ready := false }}
+{{- if $q }}{{- $ready = eq (getResourceCondition "Ready" $q).Status "True" }}{{- end }}
+...
+"Effect": "{{ if $ready }}Allow{{ else }}Deny{{ end }}",
+"Resource": "{{ if $ready }}{{ dig "resource" "status" "atProvider" "arn" "" $q }}{{ else }}*{{ end }}"
+```
 
+When `*Ref` fields can't express the dependency (e.g. needing a computed value that isn't a Ref target), split render into multiple `function-go-templating` steps:
 ```yaml
 pipeline:
   - step: render-producers
@@ -21,28 +26,16 @@ pipeline:
     functionRef: { name: function-auto-ready }
 ```
 
-## 4.2 Connection secret from composed resources
+## 4.2 Connection details
 
-In v2 there is no `connectionSecretKeys` on the XRD. Compose your own `Secret` resource instead, copying values from the underlying resource's `connectionDetails` map (which is already base64-encoded by the provider controller):
+**Prefer `writeConnectionSecretToRef` on the managed resource.** Most upjet providers support this field — set it on the resource that produces connection details (Queue, RDS Instance, etc.). The provider creates and manages the Secret automatically. No nil-guard, no encoding needed:
 
 ```yaml
----
-apiVersion: v1
-kind: Secret
-metadata:
-  annotations:
-    {{ setResourceNameAnnotation "connection-secret" }}
-  name: {{ .observed.composite.resource.metadata.name }}-pg-conn
-  namespace: {{ .observed.composite.resource.metadata.namespace }}
-{{ if eq $.observed.resources nil }}
-data: {}
-{{ else }}
-data:
-  endpoint: {{ (index $.observed.resources "pg").connectionDetails.endpoint | b64enc }}
-  username: {{ (index $.observed.resources "pg").connectionDetails.username | b64enc }}
-  password: {{ (index $.observed.resources "pg").connectionDetails.password | b64enc }}
-{{ end }}
+writeConnectionSecretToRef:
+  name: {{ .observed.composite.resource.metadata.name }}-conn
 ```
+
+**When `writeConnectionSecretToRef` isn't available**, compose a v1/Secret manually. In v2 there is no `connectionSecretKeys` on the XRD:
 
 `endpoint`/`username`/`password` are already base64 when read from `connectionDetails`, so the outer `| b64enc` is correct for putting them in a `Secret.data` field (which requires base64). If you instead read raw `status.atProvider.*` values, use `| b64enc` to encode them.
 
