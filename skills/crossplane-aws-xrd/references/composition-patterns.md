@@ -2,16 +2,16 @@
 
 ## 4.1 Multi-resource dependency
 
-**Prefer a single render step with `*Ref` fields.** Crossplane resolves ordering via cross-resource references (queueUrlRef, queueArnRef, etc.) — resources that reference each other can emit together in one step. Use `.observed.resources` + `getResourceCondition` for conditional content (e.g. Deny→Allow policies based on readiness), never for emission gating:
+:**Prefer a single render step with `*Ref` fields.** Crossplane resolves ordering via cross-resource references (queueUrlRef, queueArnRef, etc.) — resources that reference each other can emit together in one step. When a policy needs another resource's ARN, read it from observed state with nil-guard and emit unconditionally:
 
 ```yaml
-{{- $q := index $.observed.resources "queue-mine" }}
-{{- $ready := false }}
-{{- if $q }}{{- $ready = eq (getResourceCondition "Ready" $q).Status "True" }}{{- end }}
-...
-"Effect": "{{ if $ready }}Allow{{ else }}Deny{{ end }}",
-"Resource": "{{ if $ready }}{{ dig "resource" "status" "atProvider" "arn" "" $q }}{{ else }}*{{ end }}"
+{{- $obs := default (dict) $.observed.resources }}
+{{- $data := dig "queue-mine" (dict) $obs }}
+{{- $arn := dig "resource" "status" "atProvider" "arn" "" $data }}
+"Effect": "Allow",
+"Resource": "{{ $arn }}",
 ```
+The `*Ref` field (e.g. `queueUrlRef`) ensures Crossplane creates the dependency first, so `$arn` is populated by the time the policy resource is applied. No conditional Deny/Allow needed. `getResourceCondition` is not needed — the `*Ref` handles ordering.
 
 When `*Ref` fields can't express the dependency (e.g. needing a computed value that isn't a Ref target), split render into multiple `function-go-templating` steps:
 ```yaml

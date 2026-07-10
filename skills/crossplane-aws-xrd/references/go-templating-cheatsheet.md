@@ -44,7 +44,15 @@ For the authoritative list and signatures, see `function_maps.go` in <https://gi
 - `dig` paths use string keys, not dotted paths.
 - YAML block scalars: the `template: |` body has the indentation stripped, so leading spaces in your YAML are relative to the template line, not the file.
 - `{{ randAlphaNum 24 | b64enc | quote }}` produces a quoted base64 string suitable for a `Secret` `data` field.
-- **`.observed.resources` is `nil` on the first reconcile.** `index .observed.resources $key` panics on the first pass. Guard with `{{ if eq $.observed.resources nil }}...{{ else }}...{{ end }}`, or use `with`: `{{ with .observed.resources }}{{ with index . $key }}{{ dig "status" "atProvider" "arn" "" . }}{{ end }}{{ end }}`. The dig call alone (e.g. `dig "status" "vpcId" "" .observed.resources.vpc`) DOES panic because Go templates can't index a nil map with a string field — use `(index $.observed.resources "vpc")` so the nil-receiver is the indexed call, not a field access. The `getComposedResource` helper above is nil-safe and a cleaner substitute.
+:- **`.observed.resources` is `nil` on the first reconcile.** The cleanest guard: `default (dict) $.observed.resources` then `dig` into it. `dig` is safe on nil maps (returns the default value); `index` panics. Preferred pattern:
+  ```
+  {{- $obs := default (dict) $.observed.resources }}
+  {{- $data := dig "queue-key" (dict) $obs }}
+  {{- $arn := dig "resource" "status" "atProvider" "arn" "" $data }}
+  ```
+  `dig` on a single resource path also works (inner `dig` returns `(dict)` when key missing):
+  `{{- $arn := dig "resource" "status" "atProvider" "arn" "" (dig "queue-key" (dict) (default (dict) $.observed.resources)) }}`
+  **Legacy patterns** (still work, prefer the above): `{{ if eq $.observed.resources nil }}...{{ else }}...{{ end }}` with `index`, or `{{ with .observed.resources }}{{ with index . $key }}{{ dig "status" "atProvider" "arn" "" . }}{{ end }}{{ end }}`. The `getComposedResource` helper is also nil-safe.
 - **Trim collapse bug — `{{-` on its own line eats the preceding newline.** If a `{{- if }}` or `{{- range }}` sits on its own line, the left-trim removes the newline separating it from the line above. For YAML keys with list values, the parent key and the first list item collapse onto one line and the k8s.io decoder rejects with `block sequence entries are not allowed in this context` or `mapping values are not allowed in this context`. The error is reported against the *parent* key (`queue: - id: ...`), not the range directive.
   **Primary fix: drop the left-trim.** Use `{{ range }}` / `{{ end }}` (no `-`) on its own line. Blank lines are valid YAML — the decoder ignores them.
   **Secondary fix (use with care):** Inline the range on the same line as the parent key (`queue: {{ range $i, $q := $queues }}`). **Can fail** with `missing value for range` from the Go template parser when the range pipeline is complex — if so, use the primary fix.
