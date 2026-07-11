@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Symlink every folder under ./skills/ into ~/.agents/skills/.
+# Symlink every skill directory (containing SKILL.md) under ./skills/ into
+# ~/.agents/skills/, flattening nested subdirs into a single flat namespace.
 # Re-runnable: existing symlinks that already point to the right target are left alone.
 
 set -euo pipefail
 
-# Resolve repo root from the script's own location, not $PWD.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$SCRIPT_DIR/skills"
 DST_DIR="${HOME}/.agents/skills"
@@ -21,10 +21,9 @@ skipped=0
 replaced=0
 failed=0
 
-for entry in "$SRC_DIR"/*/; do
-  [[ -e "$entry" ]] || continue
+while IFS= read -r entry; do
   name="$(basename "$entry")"
-  [[ "$name" == .* ]] && continue # skip dotfiles
+  [[ "$name" == .* ]] && continue
   target="$DST_DIR/$name"
 
   if [[ -L "$target" ]]; then
@@ -46,7 +45,7 @@ for entry in "$SRC_DIR"/*/; do
   fi
 
   ln -s "$entry" "$target"
-done
+done < <(find "$SRC_DIR" -name 'SKILL.md' -exec dirname {} + | sort)
 
 echo
 echo "linked=$linked  relinked=$replaced  skipped=$skipped  failed=$failed"
