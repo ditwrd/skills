@@ -28,7 +28,6 @@ spec:
             metadata:
               annotations:
                 {{ setResourceNameAnnotation "vpc" }}
-                crossplane.io/external-name: {{ .observed.composite.resource.metadata.name }}-vpc
             spec:
               forProvider:
                 region: {{ .observed.composite.resource.spec.region }}

@@ -70,7 +70,6 @@ spec:
             metadata:
               annotations:
                 {{ setResourceNameAnnotation "vpc" }}
-                crossplane.io/external-name: {{ .observed.composite.resource.metadata.name }}-vpc
             spec:
               forProvider:
                 region: {{ .observed.composite.resource.spec.region }}
@@ -88,7 +87,6 @@ spec:
             metadata:
               annotations:
                 {{ setResourceNameAnnotation "public" }}
-                crossplane.io/external-name: {{ .observed.composite.resource.metadata.name }}-public
             spec:
               forProvider:
                 region: {{ .observed.composite.resource.spec.region }}
@@ -107,7 +105,6 @@ spec:
             metadata:
               annotations:
                 {{ setResourceNameAnnotation "private" }}
-                crossplane.io/external-name: {{ .observed.composite.resource.metadata.name }}-private
             spec:
               forProvider:
                 region: {{ .observed.composite.resource.spec.region }}
@@ -125,7 +122,6 @@ spec:
             metadata:
               annotations:
                 {{ setResourceNameAnnotation "igw" }}
-                crossplane.io/external-name: {{ .observed.composite.resource.metadata.name }}-igw
             spec:
               forProvider:
                 region: {{ .observed.composite.resource.spec.region }}
@@ -141,7 +137,6 @@ spec:
             metadata:
               annotations:
                 {{ setResourceNameAnnotation "publicrt" }}
-                crossplane.io/external-name: {{ .observed.composite.resource.metadata.name }}-public
             spec:
               forProvider:
                 region: {{ .observed.composite.resource.spec.region }}
@@ -160,7 +155,6 @@ spec:
             metadata:
               annotations:
                 {{ setResourceNameAnnotation "publicrta" }}
-                crossplane.io/external-name: {{ .observed.composite.resource.metadata.name }}-public-rta
             spec:
               forProvider:
                 region: {{ .observed.composite.resource.spec.region }}
@@ -275,7 +269,6 @@ spec:
             metadata:
               annotations:
                 {{ setResourceNameAnnotation "sg" }}
-                crossplane.io/external-name: {{ .observed.composite.resource.metadata.name }}-rds-sg
             spec:
               forProvider:
                 region: {{ .observed.composite.resource.spec.region }}
@@ -302,7 +295,6 @@ spec:
             metadata:
               annotations:
                 {{ setResourceNameAnnotation "subnets" }}
-                crossplane.io/external-name: {{ .observed.composite.resource.metadata.name }}-subnets
             spec:
               forProvider:
                 region: {{ .observed.composite.resource.spec.region }}
@@ -318,7 +310,6 @@ spec:
             metadata:
               annotations:
                 {{ setResourceNameAnnotation "pg" }}
-                crossplane.io/external-name: {{ .observed.composite.resource.metadata.name }}-pg
             spec:
               forProvider:
                 region: {{ .observed.composite.resource.spec.region }}
