@@ -1,6 +1,6 @@
 ---
-name: writing
-description: Write a blog post in the author's voice — conversational, question-driven, citation-grounded. Use when writing a new blog post or editing an existing one.
+name: writing-blog
+description: Write a blog post in the author's voice — conversational, question-driven, citation-grounded, free of AI-isms. Use when writing a new blog post, editing an existing one, or auditing a draft for AI writing patterns.
 ---
 
 # Writing
@@ -60,6 +60,7 @@ After each answer in the chain, add the kind of support it needs:
 - **Math** — `{{< katex >}}` once at first use, `$$...$$` for display equations, `\\(...\\)` for inline; follow with a `where:` list explaining each variable.
 - **Code** — always fenced with a language annotation; explain what it does *before* showing it.
 - **Images** — `![alt](./file.png)` after the paragraph that first references the concept.
+- **Mermaid diagrams** — use fenced `mermaid` code blocks to replace walls of text with visual flows (processes, architecture, interactions, data models). See `references/mermaid-diagrams.md` for type selection and layout best practices.
 - **Warnings / Notes** — `{{< alert "bell" >}}` for notes, `{{< alert >}}` for caveats.
 - **Collapsible extras** — `<details><summary>**Label**</summary>...</details>` for secondary or reference material (playlists, full paper embeds).
 
@@ -85,6 +86,53 @@ Every sentence is written in this voice:
 - **Enthusiasm for the subject.** Genuinely curious and excited about the underlying ideas — Raft's elegance, the magic of backpropagation. That energy carries the reader through complexity.
 - **Humble.** Frame as a learning journey, not a lecture. Acknowledge what you don't cover. Never oversell completeness.
 - **Punchy descriptions.** Define new terms in one sentence with `To put it simply,` or a direct apposition. If it takes more than two sentences, the concept needs breaking down further.
+
+## Avoiding AI patterns
+
+The voice guidelines above already avoid most AI-isms. This section catches the specific patterns that slip through — words and constructions statistically more common in LLM output that make text sound machine-generated.
+
+### Word replacements
+
+Replace these AI-favored words with plain alternatives:
+
+| Instead of | Use |
+|---|---|
+| delve (into) | explore, dig into, look at |
+| leverage (verb) | use |
+| utilize | use |
+| robust | strong, reliable, solid |
+| seamless / seamlessly | smooth, easy |
+| cutting-edge | latest, newest, advanced |
+| game-changer | (describe what changed and why) |
+| pivotal | important, key, critical |
+| testament to | shows, proves |
+| paradigm | model, approach, framework |
+| embark (on) | start, begin |
+| comprehensive | thorough, complete, full |
+| underscores | highlights, shows |
+| in order to | to |
+| serves as | is |
+| showcases | shows, demonstrates (or cut) |
+
+If two or more of `harness`, `navigate`, `foster`, `elevate`, `streamline`, `empower`, `facilitate`, `nuanced`, `crucial`, `ecosystem` appear in the same paragraph, that paragraph reads as AI-generated — rewrite it from scratch.
+
+### Formatting rules
+
+- **Em dashes**: Max one per 1,000 words. Replace with commas, periods, or rewrite as two sentences.
+- **Bold**: One bolded phrase per major section at most. If something's important, lead the sentence with it instead.
+- **Title case headings**: Sentence case for subheadings; title case only for the main title.
+- **Excessive bullets**: Convert to prose unless the content is genuinely list-shaped (steps, comparisons, parameters).
+- **Rule of three**: Vary groupings — two items, four items, or a full sentence. Max one triad per piece.
+
+### Structural traps
+
+- **Formulaic openings**: Don't lead with "In the rapidly evolving world of..." — start with the insight.
+- **Generic conclusions**: Cut "The future looks bright," "Only time will tell." Say something specific or nothing.
+- **Hedging**: Cut "perhaps," "could potentially," "it's important to note that." State the point directly.
+- **Synonym cycling**: Don't swap words to avoid repetition. If "developers" is the right word three times, use it three times.
+- **Transition padding**: "Moreover," "Furthermore," "Additionally" — restructure or use "and" / "also."
+
+For the full catalog including extended word tables (Tiers 1–3), severity tiers, and detailed structural patterns, see `references/ai-ism-catalog.md`.
 
 ## Templates
 
@@ -137,5 +185,7 @@ Use raw bracket-footnotes, not Hugo ref shortcodes. The footnote body always fol
 - ~~Over-explaining~~ — trust the reader to fill simple gaps
 - ~~Boilerplate transitions~~ — no "In this article, we will explore..."
 - ~~Clickbait~~ — no "You won't believe what happens next!"
+- **AI-isms** — avoid machine-generated writing patterns (em dashes, hollow intensifiers, Tier-1 word replacements); see `references/ai-ism-catalog.md` for the full catalog.
 - **Fabricated post types** — every template in this skill is extracted from an existing post. If a pattern isn't in the corpus, don't extrapolate it; call it speculative or omit it.
 - **Blockquote formatting rigidity** — the posts use bold, bold+italic, and plain blockquote questions. Don't prescribe one; describe the range.
+- **Walls of text** — 3+ consecutive paragraphs of procedural or architectural description should become a Mermaid diagram (flowchart, sequence, or architecture). Break long explanations visually. See `references/mermaid-diagrams.md`.
