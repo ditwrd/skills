@@ -1,6 +1,6 @@
 # Module folder structure
 
-The canonical layout for an AWS composite module in this repo. Every module follows the same shape so a reader can navigate without learning a new convention. `modules/aws/s3-with-policy/` is the minimal working example.
+The canonical layout for a Crossplane composite module. Every module follows the same shape so a reader can navigate without learning a new convention. Provider-specific directories under `modules/` (e.g. `modules/aws/`, `modules/vault/`) group modules by provider. `modules/<provider>/s3-with-policy/` is the minimal working concept example.
 
 ```
 <repo>/
@@ -8,7 +8,7 @@ The canonical layout for an AWS composite module in this repo. Every module foll
   .xprin.yaml                    # xprin subcommand config (one per repo)
   provider/
     function.yaml                # shared function packages (multi-doc, one per repo)
-  modules/aws/<service>-<thing>/
+  modules/<provider>/<service>-<thing>/
     xrd.yaml                     # CompositeResourceDefinition, apiextensions.crossplane.io/v2
     composition.yaml             # Composition, apiextensions.crossplane.io/v1, mode: Pipeline
     tests/
@@ -112,7 +112,7 @@ spec:
       functionRef: { name: function-auto-ready }
 ```
 
-The two-step render is the standard pattern. Step 1 emits resources with no observed state dependency. Step 2 nil-guards on `$.observed.resources` and emits dependent resources (BucketPolicy, BucketNotification, etc.) after the provider has observed the step-1 resources in AWS. The `ready` step is always last and always `function-auto-ready` — never configure it. See [references/testing-with-xprin.md](testing-with-xprin.md) for the xprin test pattern that exercises this.
+The two-step render is the standard pattern. Step 1 emits resources with no observed state dependency. Step 2 nil-guards on `$.observed.resources` and emits dependent resources (BucketPolicy, BucketNotification, etc.) after the provider has observed the step-1 resources. The `ready` step is always last and always `function-auto-ready` — never configure it. See [references/testing-with-xprin.md](testing-with-xprin.md) for the xprin test pattern that exercises this.
 
 ### `<module>/tests/` — test fixtures, self-contained
 
@@ -141,7 +141,7 @@ All paths relative to the test file. **Never use absolute paths** — xprin copi
 
 Build the module in the order below, in small commits. Each step's test should fail before its code, then pass after.
 
-1. **Empty module** — `mkdir -p modules/aws/<thing>/tests/`. Run `xprin test` against a non-existent composition. Confirms the test harness works and the path to `provider/function.yaml` is right.
+1. **Empty module** — `mkdir -p modules/<provider>/<thing>/tests/`. Run `xprin test` against a non-existent composition. Confirms the test harness works and the path to `provider/function.yaml` is right.
 2. **Write the xprin test first** — `tests/<thing>_xprin.yaml` with the two-reconcile cases (pass 1 no observed, pass 2 with observed). Run it. It fails because the composition doesn't exist.
 3. **Write `xrd.yaml`** — the schema. Re-run the test. Still fails (composition missing). The XRD is the contract; the test is the consumer of the contract.
 4. **Write the minimum `composition.yaml`** — one function-go-templating step for step-1 resources, no step 2 yet, plus `function-auto-ready` at the end. Re-run. Pass 1 should go green; pass 2 fails because there's no step 2 yet.
@@ -152,7 +152,7 @@ Each step is a small commit: test-red, code, test-green, commit. If a test ever 
 
 ## Adding a new module — checklist
 
-- [ ] `mkdir -p modules/aws/<thing>/tests/`
+- [ ] `mkdir -p modules/<provider>/<thing>/tests/`
 - [ ] Write `tests/<thing>_xprin.yaml` referencing `../../../../provider/function.yaml` (path from `tests/` to repo-root)
 - [ ] Write `tests/example-xr.yaml` (sibling of the test)
 - [ ] Write `tests/observed-<resource>.yaml` (synthetic observed state for pass 2)

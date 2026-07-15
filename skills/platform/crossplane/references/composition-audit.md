@@ -15,9 +15,9 @@ Patterns that create circular update triggers between Crossplane and the provide
 
 Resources that other controllers or tools may also manage:
 
-- **`BucketNotification`**: Authoritative — replaces the entire S3 bucket notification configuration. Any other tool (Terraform, AWS console, another operator) managing notifications on the same bucket will conflict.
-- **`QueuePolicy`**: Controls the SQS queue resource policy. Lower risk since Crossplane typically creates the queue, but external policy modifications will be overwritten.
-- **External-name naming schemes**: Resources named `<team>-<env>-<bucket>-<name>` could collide with existing AWS resources.
+- **Authoritative resources**: Some managed resources replace the entire external configuration they control (e.g. `BucketNotification` replaces all S3 notification config). Any other tool (Terraform, AWS console, another operator) managing the same resource will conflict.
+- **External-name naming schemes**: Resources named `<team>-<env>-<bucket>-<name>` could collide with existing external resources.
+- For provider-specific conflict patterns (AWS `BucketNotification`, `QueuePolicy`, etc.), see the [AWS reference](aws.md).
 
 ## 3. Connection detail updates
 

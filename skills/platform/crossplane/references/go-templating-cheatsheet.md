@@ -61,6 +61,16 @@ For the authoritative list and signatures, see `function_maps.go` in <https://gi
   **Data-block collapse:** Same mechanism when non-emitting directives (assignments, side-effect-only range) sit between a YAML key and its value. Their `{{- ` trims eat newlines, collapsing `data:` into `queueUrls:`. **Fix:** precompute the value before the block, then emit the key:value with no intermediate directives.
 - **Never pipe through `indent` in `template: |` blocks** — `{{ include "x" . | indent N }}` uses `|` which the YAML parser interprets as a block scalar indicator, breaking the literal block. Keep `include` for single-value returns in variable assignments only: `{{- $v := include "t" (dict ...) -}}`. For multi-line YAML blocks, inline them directly — no define/include.
 - **Iterating N composed resources** — use `range` with `{{- range $i := until (.observed.composite.resource.spec.count | int) }}` and give each iteration a unique name via `setResourceNameAnnotation (print "name-" $i)`. Upstream `example/inline/composition.yaml` is the canonical reference; pattern is two resources per iteration (a producer labelled by `testing.upbound.io/example-name: ...`, a dependent that selects the producer by that label), and idempotency comes from `dig` with a `randomChoice` default that stabilizes after the first reconcile.
+- **`toYaml` inside `template: |` blocks** — `{{ toYaml . | indent N }}` at column 0 on its own line breaks the block scalar (the line is less indented than the block's baseline). **Fix:** keep both on the same line as the YAML key, using `nindent` instead of `indent`: `transformation:{{ toYaml . | nindent 16 }}`. The `nindent` prepends a newline plus N spaces, placing content under the parent key.
+- **Backward-compatible field migration (string → object)** — When changing an XRD field from `array of strings` to `array of objects`, existing XRs still have the old format. Use `kindOf` (Sprig) to detect the type and normalize:
+  ```
+  {{- range $spec.items }}
+  {{- $path := . }}{{ if eq "map" (kindOf .) }}{{ $path = .path }}{{ end }}
+  ```
+  Old items: `kindOf` returns `"string"` → `$path = .` (the raw string). New items: `kindOf` returns `"map"` → `$path = .path`. **Guard ALL field accesses on the item** — a missing guard on a nested field (`.transformation`, etc.) causes `can't evaluate field X in type interface {}`:
+  ```
+  {{ if eq "map" (kindOf .) }}{{ with .transformation }}...{{ end }}{{ end }}
+  ```
 
 ## Cross-resource status writes (conditions, custom context)
 

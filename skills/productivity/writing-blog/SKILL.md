@@ -1,6 +1,6 @@
 ---
 name: writing-blog
-description: Write a blog post in the author's voice — conversational, question-driven, citation-grounded, free of AI-isms. Use when writing a new blog post, editing an existing one, or auditing a draft for AI writing patterns.
+description: Write a blog post in the author's voice — conversational, question-driven, citation-grounded, free of AI-isms. Use when writing a new blog post, editing an existing one, auditing a draft for AI writing patterns, or writing in a Veritasium style.
 ---
 
 # Writing
@@ -8,12 +8,12 @@ description: Write a blog post in the author's voice — conversational, questio
 ## Inputs
 
 - **Topic**: what the post is about (a technology, concept, or walkthrough)
-- **Post type**: one of `tutorial`, `conceptual-overview`, or `deep-dive` (series installment)
+- **Post type**: one of `tutorial`, `conceptual-overview`, `deep-dive`, or `veritasium` (Veritasium-style deep-dive)
 - **Series context** (optional): previous posts in the same series, so the opener can reference them
 
 ## What this skill does
 
-Generates a blog post in the established voice. The rhetorical backbone is a **Question Chain** — exposition driven by escalating self-answered questions in blockquotes, each answer prompting a deeper question. Every factual claim carries a citation. The tone is conversational, self-aware, and humble — framing the author and reader as on the same learning journey.
+Generates and reviews a blog post in the established voice. The rhetorical backbone is a **Question Chain** — exposition driven by escalating self-answered questions in blockquotes, each answer prompting a deeper question. Every factual claim carries a citation. The tone is conversational, self-aware, and humble — framing the author and reader as on the same learning journey. After the draft is written, an editing pass catches gaps and AI patterns.
 
 ## Process
 
@@ -24,6 +24,7 @@ The template varies by intent:
 - **Hands-on tutorial** (DVC workshop): Prerequisites → Background theory → Hands On (sub-sections per step) → Thank you
 - **Conceptual overview** (Raft overview): Why → Question Chain → TL;DR
 - **Deep-dive / series** (Raft Leader Election): Recap context → Question Chain → TL;DR → Next Up
+- **Veritasium-style deep-dive** (misconception hook → curiosity question → Question Chain with A‑Plot/B‑Plot rhythm → TL;DR)
 
 *Completion: one post type chosen, template known.*
 
@@ -32,6 +33,8 @@ The template varies by intent:
 - **Why** question for conceptual posts — state the personal motivation that led you to the topic.
 - **Problem** statement for tutorials — what gap does this fill?
 - Epigraph-style pull-quote (`> Based on...`) before the first H1 for series follow-ups.
+- **Misconception** for Veritasium-style posts — identify what the reader thinks they know, then challenge it. Instead of starting with a definition, start by showing them they might be wrong.
+- **Curiosity gap** (all question-driven posts) — pose the question before the setup. The question itself is the hook; delay the answer to build tension.
 
 The first prose after the H1 title is the hook. Keep it to 2–4 sentences.
 
@@ -42,13 +45,18 @@ The first prose after the H1 title is the hook. Keep it to 2–4 sentences.
 Expose the topic through an escalating chain of questions:
 
 1. Each question in a blockquote: `> **How does X work?**` (bold or bold+italic for emphasis; plain text also used — the constant is the blockquote, not the formatting).
-2. Answer concisely in the paragraph below.
-3. The answer's last sentence naturally prompts the next question — pivot to a deeper or related angle.
-4. Repeat until you've covered the necessary ground.
+2. Don't telegraph the answer in the question. If the question names a specific resource or concept that the answer uses as an example, the reader knows where you're going before you arrive. Bad: "How do I create an S3 bucket with Crossplane?" (the question gives away the example). Good: "How do I actually create a resource with Crossplane?" — the resource appears in the answer, not the question.
+3. Answer concisely in the paragraph below.
+4. Bridge from the previous answer's closing sentence. Read your last answer's final sentence and ask "what does this sentence make the reader wonder next?" — that wondering is your next question. This keeps the chain rising from what the reader just learned instead of pivoting to a disconnected topic.
+5. Repeat until you've covered the necessary ground.
 
 When the chain naturally forks (implementation detail vs. conceptual angle), handle one fork and save the other for "we'll discuss it in the next post".
 
 Each question must genuinely advance understanding. If a question can be collapsed into the previous answer, delete it.
+
+Every question chain also carries an emotional arc. The most reproducible pattern from published posts: **skepticism** (why should I care?) → **curiosity** → **practical "how do I"** → **challenged assumption** → **scaling** (does this hold up at size?) → **rewired understanding** (so it's really about Y, not X). Map your questions against this arc; if they all sit at the same emotional register, the reader never feels progression.
+
+For Veritasium-style posts, pace the chain with an A‑Plot / B‑Plot rhythm. The **A‑Plot** carries your personal learning journey — how you encountered the problem, what confused you, what you tried. The **B‑Plot** carries the technical detail. When the B‑Plot gets dense, pivot back to A‑Plot to keep the reader grounded. Alternate at least twice — this is the same "journey together" framing the Voice section already describes, now made explicit through narrative alternation.
 
 *Completion: the chain covers every section the post needs without gaps or redundant links.*
 
@@ -56,11 +64,11 @@ Each question must genuinely advance understanding. If a question can be collaps
 
 After each answer in the chain, add the kind of support it needs:
 
-- **Citations** — every factual claim gets a footnote: text `<cite>[^N]</cite>` with `[^N]: [Source Type](url) - description` at the bottom.
+- **Citations** — every factual claim gets a footnote: text `<cite>[^N]</cite>` with `[^N]: [Source Type](url) - description` at the bottom. For long posts, you MAY place each `[^N]:` definition right after the section that cites it instead of collecting them all at the end — this keeps source context close.
 - **Math** — `{{< katex >}}` once at first use, `$$...$$` for display equations, `\\(...\\)` for inline; follow with a `where:` list explaining each variable.
 - **Code** — always fenced with a language annotation; explain what it does *before* showing it.
 - **Images** — `![alt](./file.png)` after the paragraph that first references the concept.
-- **Mermaid diagrams** — use fenced `mermaid` code blocks to replace walls of text with visual flows (processes, architecture, interactions, data models). See `references/mermaid-diagrams.md` for type selection and layout best practices.
+- **Mermaid diagrams** — replace walls of text with visual flows. In Hugo, use `{{< mermaid >}}...{{< /mermaid >}}` shortcode (fenced `mermaid` code blocks in other Markdown renderers). See `references/mermaid-diagrams.md` for type selection and layout best practices.
 - **Warnings / Notes** — `{{< alert "bell" >}}` for notes, `{{< alert >}}` for caveats.
 - **Collapsible extras** — `<details><summary>**Label**</summary>...</details>` for secondary or reference material (playlists, full paper embeds).
 
@@ -74,6 +82,12 @@ After each answer in the chain, add the kind of support it needs:
 - **All posts**: end on a warm note — "Have a good day!" or equivalent.
 
 *Completion: closing section written matching the post type.*
+
+### 6. Review the draft
+
+Run the editing checklist at `references/editing-checklist.md` against the draft. Check every item: hook, question chain, support elements, voice consistency, AI patterns, structure, closing, and metadata.
+
+*Completion: all checklist items pass or are explicitly deferred with a reason.*
 
 ## Voice
 
@@ -113,8 +127,18 @@ Replace these AI-favored words with plain alternatives:
 | in order to | to |
 | serves as | is |
 | showcases | shows, demonstrates (or cut) |
+| unpack | explain, break down, walk through |
+| dive into / deep dive | examine, look at |
+| at the end of the day | (cut — say something specific or nothing) |
 
 If two or more of `harness`, `navigate`, `foster`, `elevate`, `streamline`, `empower`, `facilitate`, `nuanced`, `crucial`, `ecosystem` appear in the same paragraph, that paragraph reads as AI-generated — rewrite it from scratch.
+
+### Redundant qualifiers and empty intensifiers
+
+Cut these overused modifiers — they inflate emphasis without adding meaning:
+
+- **Redundant pairs**: `completely finish`, `absolutely essential`, `totally unique`, `past history`, `end result`, `future plans`
+- **Empty boosters**: `actually` (when not contrasting), `quite literally`, or overuse of `very`, `really`, `extremely`, `incredibly` — state the fact without the booster
 
 ### Formatting rules
 
@@ -133,6 +157,8 @@ If two or more of `harness`, `navigate`, `foster`, `elevate`, `streamline`, `emp
 - **Transition padding**: "Moreover," "Furthermore," "Additionally" — restructure or use "and" / "also."
 
 For the full catalog including extended word tables (Tiers 1–3), severity tiers, and detailed structural patterns, see `references/ai-ism-catalog.md`.
+For complementary anti-slop detection covering structural prose slop and technical-writing antipatterns, see the [anti-slop skill](https://github.com/rand/cc-polymath/blob/main/skills/anti-slop/references/text-patterns.md).
+For rewrite patterns and contextual slop detection (rhetorical tics, generic analogies, surface-polish-without-substance), see `references/anti-slop.md`. Also includes a local `detect_slop.py` script for automated scanning.
 
 ## Templates
 
@@ -151,7 +177,7 @@ series_order: N
 ---
 ```
 
-`description` is the second hardest thing to write (after the title): it should make someone want to click. Tease the question, not the answer.
+`description` is the second hardest thing to write (after the title): it should make someone want to click. Tease the question, not the answer. For headline patterns and formulas, see `references/headlines.md`.
 
 ### Closing ritual (tutorials)
 
@@ -189,3 +215,5 @@ Use raw bracket-footnotes, not Hugo ref shortcodes. The footnote body always fol
 - **Fabricated post types** — every template in this skill is extracted from an existing post. If a pattern isn't in the corpus, don't extrapolate it; call it speculative or omit it.
 - **Blockquote formatting rigidity** — the posts use bold, bold+italic, and plain blockquote questions. Don't prescribe one; describe the range.
 - **Walls of text** — 3+ consecutive paragraphs of procedural or architectural description should become a Mermaid diagram (flowchart, sequence, or architecture). Break long explanations visually. See `references/mermaid-diagrams.md`.
+- **Example-prose decoupling** — don't introduce a concept by name before the reader has seen it concretely, and keep every prose reference consistent with the actual YAML example. If the XRD defines `kind: App`, don't write "a Database XR" in prose; if you haven't shown Composition YAML yet, don't reference a specific Composition kind as if the reader already understands it. Examples and prose travel together.
+- **Generic code examples** — avoid variable names like `data`, `result`, `temp`, `item` in code snippets; choose domain-meaningful names (`currentUser`, `parsedDocument`). Don't write obvious comments that restate the code (`// Create a user` above `user = User()`). Your code examples should look like code a human would write, not fill-in-the-blank scaffolding.
