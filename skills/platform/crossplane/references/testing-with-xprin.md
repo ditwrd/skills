@@ -99,6 +99,29 @@ tests:
         - { type: Exists, resource: "BucketNotification/*" }
         - { type: Exists, field: "data.queueUrls", resource: "Secret/*" }
 
+```yaml
+# tests/observed-resources/queue-default.yaml
+apiVersion: sqs.aws.m.upbound.io/v1beta1
+kind: Queue
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: queue-default
+status:
+  atProvider:
+    arn: arn:aws:sqs:us-east-1:000000000000:myorg-dev-queue-default
+    url: https://sqs.us-east-1.amazonaws.com/000000000000/myorg-dev-queue-default
+  conditions:
+    - type: Ready
+      status: "True"
+      reason: Available
+    - type: Synced
+      status: "True"
+      reason: ReconcileSuccess
+```
+
+**Common trap:** writing `status.arn` instead of `status.atProvider.arn` — the dig path `dig "resource" "status" "atProvider" "arn" "" $data` returns the default empty string, and the dependent resource silently doesn't render because the ARN lookup produces `""`.
+
+
 ## Test coverage patterns
 
 For a composition that handles optional fields and defaults, structure tests around the branches the template actually evaluates:
@@ -133,7 +156,7 @@ assertions:
     # Value — catches spec.path resolving to the wrong vault path
     - name: "VaultStaticSecret path correct"
       type: FieldValue
-      resource: "VaultStaticSecret/port-vso-secret-myapp-prod-db"
+      resource: "VaultStaticSecret/vso-secret-myapp-prod-db"
       field: "spec.path"
       operator: "=="
       value: "myapp/prod/db"
