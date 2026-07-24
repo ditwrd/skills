@@ -159,5 +159,6 @@ For the rare case where `*Ref` can't express the dependency, add a second `funct
 - `references/composition-audit.md` — audit checklist for feedback loops, external controller conflicts, and connection detail thrashing
 - `references/makefile-test.md` — Makefile `test` target shape, usage, and when to create it
 - `references/generating-readmes.md` — generating READMEs with `crossplane-docs`, fixing multiline table cells
+- `references/iam-policy-transform.md` — building IAM policy JSON from Terraform-style statement objects using dict/set/append/toJson
 - `scripts/render.sh` — `crossplane render --crossplane-version=v2.3.1` wrapper
 - `scripts/get-crd-field.sh` — quick look at an installed provider CRD's OpenAPI schema

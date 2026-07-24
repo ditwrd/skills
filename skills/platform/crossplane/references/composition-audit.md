@@ -1,5 +1,15 @@
 # Composition audit
 
+## §0 In-cluster health check
+
+When a composition isn't reconciling, follow this order:
+
+1. **XR status** — `kubectl get <xr-kind> -A` — check SYNCED, READY, RESPONSIVE conditions.
+2. **Managed resources** — `kubectl get managed -A` — find the MR with missing or error conditions.
+3. **Composition revision** — verify `compositionRevisionRef` on the XR matches the active CompositionRevision.
+4. **Events** — `kubectl describe <xr> -n <ns>` — events on the XR and its owned managed resources.
+5. **Provider logs** — `kubectl logs -l app.kubernetes.io/name=provider-<name>` — controller logs.
+
 Audit a Composition for three categories of conflict.
 
 ## 1. Feedback loops
