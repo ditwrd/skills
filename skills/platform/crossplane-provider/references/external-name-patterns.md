@@ -172,10 +172,46 @@ Create function — whatever it receives is the external name format.
 
 ## Framework resources
 
-For Terraform Plugin Framework resources, upjet v2 offers additional patterns:
+For Terraform Plugin Framework resources (`// @FrameworkResource` in TF source),
+the standard patterns above still work: `NameAsIdentifier`, `ParameterAsIdentifier`,
+`IdentifierFromProvider`, `TemplatedStringAsIdentifier`. But Framework resources
+need additional handling for computed identifiers and stricter input validation.
 
-- `config.FrameworkResourceWithComputedIdentifier(field, defaultStub)` — for
-  resources whose identifier is computed by the provider, with a stub for
-  testing
-- `config.FrameworkResourceWithIdentifier(field)` — for resources with a
-  user-settable identifier field
+Framework resources use **separate config maps and include lists** from SDK
+resources — `TerraformPluginFrameworkExternalNameConfigs` and
+`TerraformPluginFrameworkIncludeList`. A resource MUST appear in at most one
+include list (SDK, Framework, or CLI) or the generator panics.
+
+### Framework-specific patterns (from provider-aws)
+
+| Pattern | When to use | Real example |
+|---|---|---|
+| `FrameworkResourceWithComputedIdentifier(attr, placeholder)` | Provider assigns the ID (ARN, UUID); TF validation needs a stub during initial read. Sets `ComputedIdentifierAttributes` to strip the field from desired-state config, preventing drift false-positives. | `aws_dsql_cluster` — stub `"artix3b6..."` for `identifier` attribute |
+| `identifierFromProviderWithDefaultStub(stub)` | `IdentifierFromProvider` variant where TF rejects empty IDs outright. Stub passes validation during initial read before the real ID exists. | `aws_bedrock_inference_profile` — stub `"bedrock12345"` |
+| `frameworkNameAsIdentifier()` | `NameAsIdentifier` variant but reads external name from `name` in TF state instead of `id` (Framework providers sometimes don't populate `id`). | `aws_bedrockagentcore_api_key_credential_provider` |
+| Custom (provider-specific) | Computed ARN identifier with region-aware stub to avoid API rejection | `aws_s3vectors_vector_bucket` — stub ARN includes correct region |
+
+### How to decide
+
+1. Check TF source for `// @FrameworkResource` or `// @SDKResource` annotation.
+2. Check the import section on the Terraform Registry for ID format.
+3. If `IdentifierFromProvider` and Framework: use `FrameworkResourceWithComputedIdentifier`
+   when the provider generates a computed attribute (ARN, gateway_id). Use
+   `identifierFromProviderWithDefaultStub` when the provider rejects empty IDs
+   entirely.
+4. If `NameAsIdentifier` and Framework: check whether the provider populates `id`
+   in TF state. If not, use the `frameworkNameAsIdentifier()` helper (copy the
+   pattern from provider-aws; it's not in the upjet stdlib).
+5. Add the resource to `TerraformPluginFrameworkExternalNameConfigs` (not
+   `TerraformPluginSDKExternalNameConfigs` or CLI `ExternalNameConfigs`).
+
+### Framework-only options
+
+- **`ComputedIdentifierAttributes`**: List of computed attribute names the
+  controller strips from desired-state config during drift calculation.
+  `FrameworkResourceWithComputedIdentifier` sets this automatically.
+- **`IsNotFoundDiagnosticFn`**: Some Framework Read implementations return
+  error diagnostics for missing resources instead of empty state. Set this
+  on `ExternalName` to suppress them.
+- **`TerraformPluginFrameworkIsStateEmptyFn`**: Custom logic for when Framework
+  state should be treated as "resource doesn't exist." Set on `config.Resource`.

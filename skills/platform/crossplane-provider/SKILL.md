@@ -16,14 +16,15 @@ An **upjet** provider wraps a Terraform provider into Crossplane managed
 resources via code generation. The framework handles CRD generation, controller
 wiring, Terraform state bridging, and late initialization.
 
-When a pattern isn't covered here, study how the reference providers solve it:
+When a pattern isn't covered here, study these reference providers:
 - [provider-upjet-aws](https://github.com/crossplane-contrib/provider-upjet-aws)
-  — Terraform Plugin SDK resources, 1000+ resources, extensive external name
-  configs and `ResourceOption` helpers in `config/overrides.go` and
-  `config/<group>/config.go`
+  — SDKv2 and Framework external name patterns, `ResourceOption` helpers,
+  tags handling, kind disambiguation. Check `config/externalname.go` and
+  `config/<group>/config.go`.
 - [provider-upjet-azure](https://github.com/crossplane-contrib/provider-upjet-azure)
-  — Terraform Plugin Framework resources, Azure's fully-qualified ID patterns
-  via `TemplatedStringAsIdentifier`, managed identity auth patterns
+  — Azure's fully-qualified ID patterns via `TemplatedStringAsIdentifier`,
+  managed identity auth, `MoveToStatus` patterns.
+For runtime errors: `references/troubleshooting.md`.
 
 ## Branches
 
@@ -79,6 +80,7 @@ Completion criterion: provider generates, compiles, and can reconcile one resour
    ```
 10. **Stage examples** from `examples-generated/` to `examples/<group>/<scope>/v1beta1/`. Add dependent resources (secrets, provider config refs).
 11. **Test** — see [test-resource](#test-resource--manual-and-automated-testing).
+12. **Run `make reviewable`** (generates, lints, and runs unit tests) before pushing — same as the CI pipeline. If `check-diff` fails, `make generate` produced uncommitted changes.
 
 ### add — add a new resource
 
@@ -87,21 +89,27 @@ Add a single Terraform resource to an existing upjet provider (brownfield).
 Completion criterion: resource generates, compiles, and passes manual or automated testing.
 
 1. **Find the Terraform resource** on the Terraform Registry. Read the import
-   section (determines external name format) and argument reference (required
-   fields, ref targets, conflicting arguments).
+   section (determines external name format) and argument reference (required fields, ref targets, conflicting arguments).
 2. **Determine plugin type** from TF source: `// @SDKResource` or `// @FrameworkResource`.
-3. **Add external name config** in `config/externalname.go`. See
-   `references/external-name-patterns.md` for the four patterns
-   (`IdentifierFromProvider`, `NameAsIdentifier`, `ParameterAsIdentifier`,
-   `TemplatedStringAsIdentifier`) with runtime flow, examples, and
-   verification guidance.
+3. **Add external name config** in the correct config map:
+   - **`// @SDKResource`** → `TerraformPluginSDKExternalNameConfigs`. Use the four
+     standard patterns: `IdentifierFromProvider`, `NameAsIdentifier`,
+     `ParameterAsIdentifier`, `TemplatedStringAsIdentifier`.
+   - **`// @FrameworkResource`** → `TerraformPluginFrameworkExternalNameConfigs`.
+     Framework resources need additional handling for computed identifiers.
+     See `references/external-name-patterns.md` Framework section for
+     `FrameworkResourceWithComputedIdentifier`, `identifierFromProviderWithDefaultStub`,
+     and `frameworkNameAsIdentifier`.
+   See `references/external-name-patterns.md` for all patterns with runtime flow,
+   examples, and verification guidance.
    
    For resources with compound or quoted ID formats (e.g. `"USER"|"TOKEN"` or `DB|SCHEMA|POLICY|USER`), verify the config by checking the TF provider's ID parsing code (search for `Parse*Identifier` in the provider source). If the provider normalizes quotes, `NameAsIdentifier` is safe. For pipe-separated IDs with irregular quoting across segments, prefer `IdentifierFromProvider` — templating the format is fragile and breaks if the provider changes internal ID conventions.
    ```go
    "aws_redshift_endpoint_access": config.ParameterAsIdentifier("endpoint_name"),
-   ```
 4. **Run `make generate`**. Verify generated files: `apis/`, `internal/controller/`,
-   `package/crds/`, `examples-generated/`.
+   `package/crds/`, `examples-generated/`. If a resource is silently skipped,
+   `check-diff` fails, or the scraper produces broken YAML, see
+   `references/troubleshooting.md`.
 5. **Handle warning boxes** — if a field is also a separate TF resource (e.g.
    `route` on `azurerm_iothub`), move to status: `config.MoveToStatus(r.TerraformResource, "route")`.
 6. **Stage example** from `examples-generated/` to `examples/`. Add dependent
@@ -143,11 +151,7 @@ for details on all of the following:
 ### test-resource — manual and automated testing
 
 #### Manual test
-> **Warning:** Never change `crossplane.io/external-name` on an existing
-> reconciled resource. The annotation is the Terraform state identity key.
-> Changing it tells upjet to abandon the old resource and adopt a different
-> external name, causing an import-failure loop that trips the Crossplane
-> circuit breaker. Set it once at creation (or let the initializer set it).
+> **Warning:** Never change `crossplane.io/external-name` on an existing reconciled resource. See `references/external-name-patterns.md` for details.
 
 
 1. Apply CRDs: `kubectl apply -f package/crds`
