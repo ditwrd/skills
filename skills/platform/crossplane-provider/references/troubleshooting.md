@@ -121,10 +121,58 @@ map means it never gets the config you wrote.
 **Symptom:** Two TF resources that would generate the same Kind silently drop
 one (no CRD for the second).
 
-**Fix:** Set explicit `r.Kind` in the group configurator:
+**Detection before generating:** Compute the auto-generated Kinds and check for
+duplicates:
+```shell
+# List all resource names and their PascalCase Kinds:
+# Kind = PascalCase(full_resource_name after stripping provider prefix)
+python3 -c "
+import yaml
+with open('config/provider-metadata.yaml') as f:
+    data = yaml.safe_load(f)
+for name in sorted(data.get('resources', {})):
+    stripped = name.replace('snowflake_', '', 1)  # change to your prefix
+    kind = ''.join(p.capitalize() for p in stripped.split('_'))
+    print(kind, name)
+" | sort | uniq -d   # --repeated shows collisions
+```
+Compare within each ShortGroup — cross-group collisions are safe (different
+API groups). Also check generated CRDs for `_2` file name suffix, which upjet
+appends to the second Kind on collision.
+
+**Fix:** Set explicit `r.Kind` on BOTH the cluster and namespaced configurators:
 ```go
 p.AddResourceConfigurator("snowflake_legacy_service_user", func(r *config.Resource) {
     r.ShortGroup = "user"
     r.Kind = "LegacyServiceUser"
 })
 ```
+
+## Go `internal` package collision
+
+**Symptom:** `golangci-lint` fails with `use of internal package .../stable/internal not allowed`.
+Make generates successfully, but lint fails because the generated package can't be imported.
+
+**Root cause:** A TF resource name contains `internal` (e.g.
+`snowflake_stage_internal`). The generator produces a package directory
+`internal/` inside the controller tree. Go's `internal` visibility rule blocks
+imports from sibling packages — the `zz_setup.go` at
+`internal/controller/namespaced/` can't import from
+`internal/controller/namespaced/stable/internal/`.
+
+**Detection:** After generating CRDs, check for CRD filenames with
+`internals` as the resource plural:
+```shell
+ls package/crds/*_internals.yaml
+```
+
+**Fix:** Override the Kind to a name that doesn't lower-case to `internal`:
+```go
+p.AddResourceConfigurator("snowflake_stage_internal", func(r *config.Resource) {
+    r.ShortGroup = shortGroup
+    r.Kind = "StageInternal"
+})
+```
+Apply to BOTH `config/cluster/<group>/config.go` and
+`config/namespaced/<group>/config.go`, then `make generate` (after cleaning
+stale `apis/` dirs that still reference the old Kind).
