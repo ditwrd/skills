@@ -1,13 +1,12 @@
 ---
 name: crossplane-provider
 description: >
-  Upjet provider. Scaffolds or extends a Crossplane provider from a
-  Terraform provider via code generation. Use when scaffolding a new
-  provider (greenfield), adding a resource, configuring cross-resource
-  references, testing a resource, migrating from classic providers, or
-  upgrading CRD versions.
+  Scaffolds or extends a Crossplane provider from a Terraform provider
+  via code generation. Use when scaffolding a new provider (greenfield),
+  adding a resource, configuring a resource, testing, debugging a
+  broken resource, migrating from classic providers, or upgrading CRD
+  versions.
 ---
-
 # Upjet-based Crossplane providers
 
 An **upjet** provider wraps a Terraform provider into Crossplane managed
@@ -23,7 +22,6 @@ See [`references/provider-patterns.md`](references/provider-patterns.md) for a
 side-by-side comparison of how each provider handles external names, including
 provider-specific helpers, template formats, and pattern frequency.
 For runtime errors: `references/troubleshooting.md`.
-
 ## Branches
 
 Every upjet workflow starts at the Terraform Registry. The resource's **import
@@ -44,16 +42,9 @@ Completion criterion: provider generates, compiles, and can reconcile one resour
 6. **Add external name configs** in `config/externalname.go`. Only resources with a config are generated. See `references/external-name-patterns.md`.
 7. **Create group configurators** `config/<scope>/<group>/config.go` — each exports `Configure(p *config.Provider)` setting `r.ShortGroup` and refs.
 
-   **Preview vs stable families**: when the TF provider marks resources by
-   subCategory as "Preview" vs "Stable", choose a ShortGroup strategy:
-   - **Per-family groups** (e.g. `user` vs `userpreview`): one group per resource
-     family. Preview schema changes never touch stable CRDs. Graduation adds a
-     stable CRD with conversion from the preview version. Use when you need
-     per-family API isolation and don't mind 40+ groups.
-   - **2-group model** (e.g. `stable` vs `preview`): all stable resources in one
-     group, all preview in another. Simpler to maintain — Preview→Stable is a
-     single-line ShortGroup change. Use when most families have few resources
-     and per-family groups would create near-empty API groups.
+   **Preview vs stable families**: two ShortGroup strategies — per-family groups
+   (resource isolation, many groups) or 2-group model (`stable`/`preview`, simpler
+   to maintain). Choose based on family size vs API isolation needs.
 8. **Register** group configurators in `config/provider.go` — import the package, add to the `for range` loop in both `GetProvider()` and `GetProviderNamespaced()`.
 9. **Run `make generate`** (requires `goimports` — `go install golang.org/x/tools/cmd/goimports@latest`; if `command not found`, add `$(go env GOPATH)/bin` to PATH). Verify `apis/`, `internal/controller/`, `package/crds/`, `examples-generated/`. If the scraper produces broken YAML keys, see `references/troubleshooting.md`.
 10. **Stage examples** from `examples-generated/` to `examples/<group>/<scope>/v1beta1/`. This is typically a straight copy — generated examples already have correct API group refs (`<provider>.crossplane.io`) and no `-TODO` cleanup. Verify counts match:
@@ -75,44 +66,47 @@ Completion criterion: resource generates, CRD compiles, and example stages with 
 1. **Find the Terraform resource** on the Terraform Registry. Read the import
    section (determines external name format) and argument reference (required fields, ref targets, conflicting arguments).
 2. **Determine plugin type** from TF source: `// @SDKResource` or `// @FrameworkResource`.
+   Plugin type determines execution path: SDK/Framework resources use in-process
+   Go SDK/gRPC and support `TerraformConfigurationInjector` and
+   `TerraformCustomDiff`; CLI-path resources (default `IncludeList`) fork a
+   `terraform` subprocess and those hooks are no-ops.
+   See `references/resource-configuration.md#execution-paths`.
 3. **Add external name config** in the correct config map:
    - **`// @SDKResource`** → `TerraformPluginSDKExternalNameConfigs`
    - **`// @FrameworkResource`** → `TerraformPluginFrameworkExternalNameConfigs`
 
-   **Decision tree** — read the Terraform import section, then trace `d.SetId()` in the TF Create function
-   (see [Verifying the ID format](references/external-name-patterns.md#verifying-the-id-format)):
-   - Provider-generated ID (ARN, URL, UUID) → `IdentifierFromProvider`
-   - Compound ID with separator (pipe, colon, slash) → `TemplatedStringAsIdentifier` / `FormattedIdentifierFromProvider`
-   - Conditional compound ID (one-of-many mutually-exclusive parameters) →
-     define a provider-local `OneOfIdentifier` helper and use it instead of
-     inline conditional templates; see `references/external-name-patterns.md`
-   - Azure-style full resource ID (name is one segment) → `NameAsIdentifier` + `GetExternalNameFn`/`GetIDFn`
-   - Bare name IS the identifier:
-     - TF argument is `"name"` → `NameAsIdentifier` (name omitted from spec, set via `metadata.name`)
-     - TF argument is a different field (e.g. `bucket`) → `ParameterAsIdentifier("field")`
-     - TF argument diverges from both `name` and a spec-visible field → `NameAsIdentifier` + custom `SetIdentifierArgumentFn` mapping to correct key + `OmittedFields`
-   - No import section → trace `d.SetId()` in the TF Create function — the
-     ID format is still determinable from code:
-     - Provider-generated (ARN, UUID) → `IdentifierFromProvider`
-     - Compound of user-supplied parameters → `TemplatedStringAsIdentifier`
-
-   See `references/external-name-patterns.md` for full patterns with runtime flows, Framework-specific config, and compound ID edge cases.
-4. **Run `make generate`**. Verify generated files: `apis/`, `internal/controller/`,
+   **Decision tree** — see `references/external-name-patterns.md` for the full
+   pattern decision tree with runtime flows, Framework config, and compound ID
+   edge cases. Key patterns: `IdentifierFromProvider` (provider assigns ID),
+   `TemplatedStringAsIdentifier` (compound with separator),
+   `NameAsIdentifier` (user name IS the ID),
+   `ParameterAsIdentifier("field")` (a spec field IS the ID).
+   Always trace `d.SetId()` in the TF Create function to verify the runtime ID.
+4. **Check TF schema for sentinel defaults** — scan optional fields whose
+   Default would fail the provider's own `ValidateFunc`/`ValidateDiagFunc`
+   (e.g. `"default"` string with boolean validation, `-1` int with
+   `IntAtLeast(0)`). See `references/resource-configuration.md#sentinel-default-values`
+   for the full fix pattern. All paths need `LateInitializer.IgnoredFields`
+   (this is the critical fix — without it, every reconcile after the first
+   Create fails). A schema Default override and
+   `TerraformConfigurationInjector` are only needed for SDK/Framework-path
+   resources; CLI-path resources (the default `IncludeList` matching `.+`)
+   can skip both — `IgnoredFields` alone prevents the field from entering
+   `main.tf.json`.
+5. **Run `make generate`**. Verify generated files: `apis/`, `internal/controller/`,
    `package/crds/`, `examples-generated/`. If a resource is silently skipped,
    `check-diff` fails, or the scraper produces broken YAML, see
    `references/troubleshooting.md`.
-5. **Handle warning boxes** — if a field is also a separate TF resource (e.g.
+6. **Handle warning boxes** — if a field is also a separate TF resource (e.g.
    `route` on `azurerm_iothub`), move to status: `config.MoveToStatus(r.TerraformResource, "route")`.
-6. **Stage example** from `examples-generated/` to `examples/`. For multi-scope providers (cluster + namespaced), stage to both `examples/cluster/<group>/v1alpha1/` and `examples/namespaced/<group>/v1alpha1/`. Add dependent resources (secrets, provider config refs), verify with `kubectl apply --dry-run=client`.
+7. **Stage example** from `examples-generated/` to `examples/`. For multi-scope providers (cluster + namespaced), stage to both `examples/cluster/<group>/v1alpha1/` and `examples/namespaced/<group>/v1alpha1/`. Add dependent resources (secrets, provider config refs), verify with `kubectl apply --dry-run=client`.
 
-   For `NameAsIdentifier` resources, the generated example may show
-   `forProvider: {}` because upjet only uses the first scraped example and
-   `name` is in `OmittedFields`. The name comes from `metadata.name` at
-   runtime. Stage a richer example manually if needed.
-7. **Add cross-resource references** if auto-generator missed them. See
+   For `NameAsIdentifier` resources, `forProvider: {}` in generated examples is
+   normal — `name` is in `OmittedFields`, populated from `metadata.name` at runtime.
+8. **Add cross-resource references** if auto-generator missed them. See
    `references/resource-configuration.md`.
-8. **Commit** — message: `Configure <Resource>.<group> and add example`.
-9. **Run `make reviewable`** before pushing.
+9. **Commit** — message: `Configure <Resource>.<group> and add example`.
+10. **Run `make reviewable`** before pushing.
 
 ### wire — resource configuration
 
@@ -126,12 +120,28 @@ Completion criterion: each listed concern is addressed or explicitly deferred.
    Auto-generator covers most cases from scraped TF examples. Zero `r.References` entries is normal for a fresh provider — the auto-generator may detect references from HCL interpolation and handle them at runtime rather than through Go-level config.
 2. **Sensitive fields / connection details** — auto-handled for `Sensitive: true`
    fields; add custom keys via `r.Sensitive.AdditionalConnectionDetailsFn`.
-3. **Late init** — `r.LateInitializer.IgnoredFields` for conflicting TF arguments.
-4. **Common options** — define `ResourceOption` functions, apply via
+3. **Late init** — `IgnoredFields` for conflicting TF arguments and sentinel
+   defaults; `ConditionalIgnoredFields` for fields skipped only when
+   `spec.initProvider` already sets them. Late-init copies cloud-provider
+   default values into `spec.forProvider` for unset fields, preventing
+   perpetual drift. The error signal is `observe failed: cannot run refresh:
+   refresh failed:`. See `references/resource-configuration.md#late-initialization`
+   for config details and `references/troubleshooting.md#late-init-conflicts`
+   for the error pattern.
+4. **Diff suppression** — `r.TerraformCustomDiff` suppresses false diffs when
+   TF computes zero-count for unset blocks (SDK path only).
+5. **Move to status** — `config.MoveToStatus(r.TerraformResource, "field")`
+   moves sub-resource-managed fields out of the desired spec.
+6. **Pre-reconcile init** — `r.InitializerFns` for custom logic that runs
+   before reconciliation (e.g., setting tags from provider metadata).
+7. **Config injection** — `r.TerraformConfigurationInjector` for injecting
+   values the JSON→TF deserialization drops (SDK/Framework paths only).
+8. **Common options** — define `ResourceOption` functions, apply via
    `p.ConfigureResources(RegionRequired(), TagsAllRemoval(), ...)`.
-5. **Custom templates** — override generation templates (controller, setup,
-   terraformed, main) only when defaults don't fit.
-6. **Kind disambiguation** — if two TF resources generate the same Kind, the pipeline silently drops one. See `references/troubleshooting.md` for the fix.
+9. **Custom templates** — override generation templates only when defaults
+   don't fit. See `references/resource-configuration.md#custom-templates`.
+10. **Kind disambiguation** — if two TF resources generate the same Kind,
+    the pipeline silently drops one. See `references/troubleshooting.md`.
 
 ### test-resource — manual and automated testing
 Completion criterion: resource reconciles (SYNCED+READY=True) and passes import survival test.
@@ -139,7 +149,6 @@ Completion criterion: resource reconciles (SYNCED+READY=True) and passes import 
 
 #### Manual test
 > **Warning:** Never change `crossplane.io/external-name` on an existing reconciled resource. See `references/external-name-patterns.md` for details.
-
 
 1. Apply CRDs: `kubectl apply -f package/crds`
 2. Create ProviderConfig with valid credentials

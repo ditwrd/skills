@@ -45,8 +45,12 @@ p.AddResourceConfigurator("azurerm_subnet", func(r *config.Resource) {
 - **`IgnoredFields`**: TF field paths (dot-separated) unconditionally skipped.
 - **`ConditionalIgnoredFields`**: Skipped only when already set in `spec.initProvider`.
 
-Any unexpected `observe failed:` error after the parameters look correct is
-likely a late-init conflict.
+Any unexpected `observe failed:` error with argument conflict messages
+(`only one of`, `can be specified`) is likely a late-init conflict.
+Errors with `expected [...] to be one of [...], got default:` or
+`expected [...] to be at least (0), got -1:` are likely sentinel default
+values — see [Sentinel default values](resource-configuration.md#sentinel-default-values)
+in resource configuration.
 
 ## Scraper produces broken provider-metadata.yaml
 
@@ -78,6 +82,235 @@ Common causes:
 
 **Fix:** Run `make generate` and commit the diff. Never manually edit generated files.
 
+## Resource stuck in constant update loop / false diff
+
+**Symptom:** Resource shows `SYNCED: True, READY: True` but reconciles every
+poll interval with an update. No user change triggered it.
+
+**Root causes:**
+
+1. **Zero-count optional blocks (SDK path)** — The TF plugin computes a
+   non-empty diff for unset optional blocks (`# = 0` in state vs `# = 0` in
+   config — treated as change). Common with computed nested blocks.
+
+2. **Config-vs-state field mismatch (all paths)** — A single field differs
+   between `main.tf.json` and `terraform.tfstate` (e.g. case mismatch
+   between a TF schema default like `"ignore"` and what Snowflake returns
+   like `"IGNORE"`). The TF provider either lacks a `DiffSuppressFunc` for
+   this field or the CLI path doesn't use it.
+
+3. **Case normalization by cloud API** — Snowflake (and other APIs) may
+   normalize string values to uppercase. If the TF schema default is
+   lowercase, the config has one case and the state another, producing a
+   perpetual diff.
+
+**Detection:** Enable `-d` (debug) on the provider and check the diff output
+for `# = 0` attributes or fields you didn't change.
+
+For CLI-path resources (the default), compare `main.tf.json` against
+`terraform.tfstate` attribute by attribute to spot single-field mismatches.
+The workspace path appears in the debug log on the `Running terraform` line:
+```shell
+# Replace WS with the workspace UUID from the debug log
+WS=/tmp/<workspace-uuid>
+python3 -c "
+import json
+with open('$WS/main.tf.json') as f:
+    config = json.load(f)
+with open('$WS/terraform.tfstate') as f:
+    state = json.load(f)
+
+# Extract resource attributes from config (skip meta-args)
+config_attrs = {}
+for _, cfg in config.get('resource',{}).get('snowflake_user',{}).items():
+    config_attrs = {k:v for k,v in cfg.items()
+        if k not in ('provider','_meta','lifecycle')}
+
+# Extract resource attributes from state
+state_attrs = {}
+for r in state.get('resources',[]):
+    for inst in r.get('instances',[]):
+        state_attrs = inst.get('attributes',{})
+
+# Print only mismatched fields
+for k in sorted(set(state_attrs.keys()) & set(config_attrs.keys())):
+    sv, cv = state_attrs.get(k), config_attrs.get(k)
+    if sv != cv:
+        print(f'{k}: state={repr(sv)}  config={repr(cv)}')
+"
+```
+
+### Fixes
+
+#### SDK path: `TerraformCustomDiff` for zero-count blocks
+
+Add a `TerraformCustomDiff` that removes the zero-count diff entries:
+```go
+r.TerraformCustomDiff = func(diff *terraform.InstanceDiff, _ any, _ *schema.ResourceData) (*terraform.InstanceDiff, error) {
+    delete(diff.Attributes, "enclave_options.#")
+    delete(diff.Attributes, "metadata_options.#")
+    return diff, nil
+}
+```
+
+This is a per-resource SDK path fix. Framework resources may need a
+different approach (the in-process gRPC path computes diffs differently).
+
+Using `config.MoveToStatus(r.TerraformResource, "field")` as an alternative
+moves the field entirely to `status.atProvider`, keeping it out of the diff.
+
+#### CLI path: `LateInitializer.IgnoredFields` (all paths)
+
+For case-normalization mismatches and other config-vs-state field diffs, add
+the mismatched field to `IgnoredFields`. This prevents the late-initializer
+from copying the field into `spec.forProvider`, keeping it empty. Upjet omits
+empty fields when building `main.tf.json`, so terraform never sees a config
+value for the field, treats it as computed-only, and never plans a diff:
+```go
+r.LateInitializer.IgnoredFields = append(r.LateInitializer.IgnoredFields,
+    "unsupported_ddl_action",
+)
+```
+
+**For existing resources**, the CR spec must also be patched to remove the
+stale field value — otherwise upjet still reads it from `spec.forProvider`
+and includes it in `main.tf.json`:
+```shell
+kubectl patch <resource>.<group>.<provider>.crossplane.io -n <ns> <name> \
+  --type=json -p='[{"op": "remove", "path": "/spec/forProvider/unsupportedDdlAction"}]'
+```
+
+This triggers a spec change, upjet regenerates `main.tf.json` without the
+field, and the loop stops on the next reconcile.
+
+
+### Computed status field loop (XRM violation)
+
+**Symptom:** Resource reconciles every poll interval with a diff on a
+`status.atProvider` field (not a `spec.forProvider` field). The field is
+computed/read-only in the Terraform schema but the TF provider's
+**customize diff** function recomputes it based on a spec field. Diff log
+shows `NewComputed:true` or `NewRemoved` on status-only keys. Common when a
+sub-aspect has a dedicated Terraform resource (e.g. `app_role` on an
+Application also managed by `application_app_role`).
+
+**Root cause:** The Crossplane Resource Model (XRM) requires one owner per
+aspect. Putting a field in `spec.forProvider` grants ownership to that
+resource. If a separate resource also manages the same aspect, two controllers
+claim ownership — the XRM violation. The TF provider's customize diff
+function (called during `terraform plan`) recomputes a computed status field
+based on the spec field, producing a perpetual diff at the HCL/plugin layer
+that upjet's reconciler can't filter. Late-initialization can't intercept it
+because the diff happens below the CRD struct layer.
+
+**Fix:** Move the field to status, delegating its management to the dedicated
+resource.
+```go
+config.MoveToStatus(r.TerraformResource, "app_role")
+```
+This is a **breaking API change** — existing manifests with the field in
+`spec.forProvider` will fail. Announce in release notes. Users migrate to the
+dedicated resource.
+
+**Detection:** The provider debug log shows `Diff detected` on status-field
+keys every cycle. Check the TF provider source code for a `customizeDiff`
+function that references the computed field. If the field has a dedicated TF
+resource, it belongs in status, not spec.
+
+**Prevention:** Before adding a field to `spec.forProvider`, check if the TF
+provider has a separate resource for the same sub-aspect. The upjet
+[adding-new-resource](https://github.com/crossplane/upjet/blob/main/docs/adding-new-resource.md)
+guide flags this as "Warning boxes" — fields mutually exclusive with other
+resources should use `MoveToStatus`.
+
+## Out-of-band changes absorbed by late init, not reverted
+
+**Symptom:** You change a resource field via the cloud console/UI (not the CR).
+The provider observes the change (`status.atProvider` updates) but does NOT
+revert it — the new value persists and eventually appears in
+`spec.forProvider` too. You expected the provider to enforce the original CR
+value.
+
+**Root cause:** Upjet's late initializer copies the observed state into
+`spec.forProvider` for fields that are empty/unset in the CR. After the
+out-of-band change:
+1. Observe detects the new value in TF state.
+2. Late init copies it into `spec.forProvider` (the field was previously empty).
+3. Spec now matches state — no diff detected. No revert.
+
+Upjet only manages fields that have **explicit non-empty values** in
+`spec.forProvider`. Empty/unset fields are treated as "don't care" — the
+provider accepts whatever the cloud API returns.
+
+**Fix:** To enforce a specific value (including empty), set it explicitly in
+`spec.forProvider`. This puts it in `main.tf.json`, making Terraform manage
+it and revert drift on every reconcile.
+
+```yaml
+spec:
+  forProvider:
+    defaultRole: "SOME_ROLE"  # explicitly managed → drift reverted
+```
+
+To enforce an empty/unset value, the field must be explicitly managed. For
+some fields, this may require setting them to `""` or a sentinel value that
+the TF provider interprets as "no value" — check the TF provider's behavior
+for the specific field.
+
+**See also:**
+[`references/resource-configuration.md#ignored-fields`](resource-configuration.md#late-initialization)
+for how `IgnoredFields` can prevent this auto-sync on specific fields.
+
+## Execution path detection (CLI vs SDK vs Framework)
+
+**Symptom:** A resource config option (`TerraformConfigurationInjector`,
+`TerraformCustomDiff`, etc.) doesn't take effect despite being set correctly
+in Go code and the provider rebuilding.
+
+**Root cause:** The option only fires in certain execution paths. See
+`references/resource-configuration.md#execution-paths` for which hooks fire
+where.
+
+**Detection:** Check provider logs with `-d` flag:
+- **CLI path** (default, `IncludeList`): logs show `terraform apply
+  -refresh-only`, `terraform plan`, etc. — actual subprocess calls.
+- **SDK in-process** (`TerraformPluginSDKIncludeList`): no subprocess logs;
+  calls `RefreshWithoutUpgrade` and `Apply` directly via Go SDK.
+- **Framework in-process** (`TerraformPluginFrameworkIncludeList`): no
+  subprocess logs; calls `ReadResource`, `ApplyResourceChange` via gRPC.
+
+Most resources use the CLI path by default unless explicitly moved to SDK
+or Framework include lists. If a resource doesn't appear in any include
+list, it's skipped silently.
+
+## Config changes not reflected after code edit
+
+**Symptom:** You edit config Go code (`TerraformConfigurationInjector`,
+`LateInitializer`, references, etc.), `go vet` and `go build` pass, but the
+resource still exhibits the old behavior. The fix compiles but doesn't take
+effect.
+
+**Root cause:** The running provider binary in `_output/bin/linux_amd64/provider`
+is stale. `make run` rebuilds on restart, but a direct `go build ./cmd/provider`
+places the binary elsewhere. The provider must be rebuilt and restarted.
+
+**Fix:**
+1. `pkill -f "provider.*snowflake"` (or the provider name)
+2. `go build -o _output/bin/linux_amd64/provider ./cmd/provider/...`
+3. `make run` (or run the binary directly with the required flags)
+4. If a resource is stuck in deletion with a finalizer, force-remove it:
+   `kubectl patch <resource> -n <ns> -p '{"metadata":{"finalizers":[]}}' --type=merge`
+5. Re-apply the example from the clean manifest
+
+**Prevention:** After any `config/` Go change, always rebuild and restart the
+provider. A `go vet ./config/...` alone is not sufficient.
+
+To verify a config option produced the expected effect, check the generated
+`zz_*_terraformed.go` files in `apis/`. For example, `IgnoredFields` produces
+`WithNameFilter` calls in `LateInitialize()` — if the filter is missing from
+the generated code, the config change wasn't picked up (re-run `make generate`
+and rebuild).
+
 ## External name misconfiguration
 
 **Symptom:** Resource creates but shows `status.atProvider.id` that looks wrong,
@@ -97,6 +330,48 @@ or the resource is destroyed and recreated on every reconcile.
    identifiers need a placeholder stub for initial reads. Use
    `FrameworkResourceWithComputedIdentifier` or
    `identifierFromProviderWithDefaultStub`.
+
+## Update blocked by lifecycle.prevent_destroy
+
+**Symptom:** The resource's `status.conditions` shows `Synced=False` with a
+message like:
+```
+observe failed: cannot run plan: plan failed: Instance cannot be destroyed:
+Resource <type>.<name> has lifecycle.prevent_destroy set, but the plan calls
+for this resource to be destroyed.
+```
+
+**Root cause:** Upjet unconditionally sets `"prevent_destroy": true` in the
+generated Terraform HCL for every resource that is NOT currently being deleted
+(deletion timestamp unset) — see upjet's `pkg/terraform/files.go`. This is an
+intentional safety guard: it prevents accidental destroy+recreate on spec
+changes.
+
+The error fires when a spec field change causes Terraform's plan to show
+destroy+create instead of an in-place update. This happens for any resource
+whose TF provider has **no Update function** (only Create and Delete — e.g.
+grant/attachment resources like `snowflake_grant_account_role`, policy
+attachments, role associations). The only way to "update" such a resource in
+Terraform is to destroy the old and create a new one.
+
+**Detection:** Read the error from the resource's Synced condition:
+```shell
+kubectl get <resource>.<group> -n <ns> <name> -o jsonpath='{.status.conditions[?(@.type=="Synced")].message}'
+```
+The raw Terraform error is in there.
+
+**Fix options (no provider-side code change possible):**
+
+1. **Delete and recreate** — delete the MR (sets `WasDeleted=true`, clearing
+   `prevent_destroy`), then recreate with the new spec fields. Terraform
+destroys the old resource (REVOKE) and creates the new one (GRANT).
+
+2. **Revert the spec** — change the spec fields back to match the existing
+   Terraform state (visible in `status.atProvider`). The plan shows no change,
+   and the resource resumes normal reconciliation.
+
+**Upjet reference:** upjet's `docs/testing-with-uptest.md` documents this as a
+known error case under "prevent_destroy Case".
 
 ## Framework/SDK include list mismatch
 

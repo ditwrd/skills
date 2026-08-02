@@ -21,23 +21,36 @@ function:
 
 3. **Trace helper functions**: Many providers use encoding helpers that
    transform identifiers before joining them:
-   - `AccountObjectIdentifier.FullyQualifiedName()` → `"NAME"` (SQL-quoted)
-   - `SchemaObjectIdentifier.FullyQualifiedName()` → `"DB"."SCHEMA"."NAME"` (each segment quoted, dot-joined)
-   - `EncodeResourceIdentifier` with `T=string` joins parts with `|` as-is.
-     `T=AccountObjectIdentifier` uses bare `.Name()`;
-     `T=SchemaObjectIdentifier` uses `.FullyQualifiedName()`.
-   - The generic type parameter `T` is deduced from the argument type: pass
-     a raw string → `T=string`; pass an identifier struct → `T=Identifier`.
-   - Legacy encoders exist in some providers (e.g. an older encoder might join
-     parts with `|` without quoting, while the newer encoder adds SQL-style
-     quoting). Prefer the newer encoder when both exist — consistent quoting
+   - A simple join encoder concatenates parts with a separator (e.g. `|`),
+     each part bare — `part1|part2|part3`.
+   - A quoting encoder wraps parts in delimiters (e.g. SQL-style double
+     quotes) before joining — `"part1"|"part2"|"part3"`.
+   - Some encoders use generics or type parameters: passing a raw string
+     treats every part as-is; passing a structured identifier calls its
+     `.String()` or `.FullyQualifiedName()` method for quoting.
+   - Legacy encoders may omit quoting entirely. When a provider has both
+     a legacy and a newer encoder, prefer the newer one — consistent quoting
      prevents false drifts on reconcile.
 
 4. **Check the import function**: The `Importer.StateContext` typically calls
    `ParseResourceIdentifier(d.Id())` to split the ID on the separator. The
    number of parts tells you the compound structure.
 
-5. **Confirm the pattern** against the decision tree below.
+5. **Verify string literals against the SDK, not prose.** Object-type tokens,
+   separators, and quoting come from the provider SDK's actual constants and
+   encoder functions — not from the Terraform Registry's import section
+   comment or a scraped `provider-metadata.yaml`, both of which are
+   human-written and can be wrong (e.g. a doc comment saying
+   `DATABASE_ROLE` when the SDK constant is `sdk.ObjectTypeDatabaseRole =
+   "DATABASE ROLE"` with a space). A provider may also mix encoders across
+   resources — one legacy (`EncodeSnowflakeID`-style, plain `strings.Join`,
+   no quoting added) and one current (`EncodeResourceIdentifier`-style,
+   calls `.FullyQualifiedName()` per part, which quotes every dot-segment
+   regardless of whether the input arrived quoted or bare). Trace the
+   specific resource's actual encoder call, don't assume based on a sibling
+   resource in the same provider.
+
+6. **Confirm the pattern** against the decision tree below.
 
 ## Decision tree
 
@@ -49,7 +62,17 @@ IF (provider generates the ID — ARN, URL, UUID, hash)
     USE config.IdentifierFromProvider
 
 ELSE IF (compound ID with separator — pipe, colon, slash)
-    USE config.TemplatedStringAsIdentifier("name", "template")
+    IF (a candidate identity field has many:1 cardinality —
+        TF's own examples for_each over ANOTHER field while holding this
+        one fixed, e.g. one role granted to many parents/users)
+        USE §4.6 config.NewExternalNameFrom(config.IdentifierFromProvider,
+            config.WithGetIDFn(...)) — build the ID in Go, omit no field
+    ELSE IF (exactly one of several mutually-exclusive params fills the
+             other segment(s), and cardinality is 1:1 — see §4.5)
+        USE §4.5 OneOfIdentifier / config.TemplatedStringAsIdentifier("name", "template")
+    ELSE
+        USE config.TemplatedStringAsIdentifier("name", "template")
+    END IF
     // Azure-style: name is one segment of full resource ID
     // → config.NameAsIdentifier + GetExternalNameFn(extract name from ID) + GetIDFn(reconstruct full ID from name)
 
@@ -74,6 +97,8 @@ ELSE IF (no import section)
     IF (d.SetId() receives a provider-generated value — ARN, UUID, URL)
         USE config.IdentifierFromProvider
     ELSE IF (d.SetId() receives a compound of user-supplied parameters)
+        // same cardinality check as above: many:1 → §4.6 Go-built ID;
+        // else → TemplatedStringAsIdentifier / OneOfIdentifier
         USE config.TemplatedStringAsIdentifier("name", "template")
         // e.g. EncodeResourceIdentifier(user.FQN(), policy.FQN())
         // → TemplatedStringAsIdentifier with the FQN passed through as parameter
@@ -266,15 +291,30 @@ several mutually-exclusive parameters (e.g. a grant resource where the
 grantee is a role, user, database_role, or share — only one is set at a
 time). The TF schema marks these with `ExactlyOneOf`.
 
-**Config:** provider-local `OneOfIdentifier` helper. Define once in
-`config/external_name.go`, then use for every resource with this pattern.
+**Cardinality check — do this first.** `OneOfIdentifier` is a
+`TemplatedStringAsIdentifier` under the hood, so `nameField` gets
+`OmittedFields` and is driven by `metadata.name` →
+`crossplane.io/external-name` (see [Identity cardinality](glossary.md)).
+That's only safe when `nameField` has 1:1 cardinality with the resource.
+Check the TF resource's own examples: if they `for_each` over the
+*conditional grantee* while holding `nameField` fixed (e.g. granting one
+role to N different parents/users as separate resources), `nameField` has
+many:1 cardinality and `OneOfIdentifier` is the wrong tool — two sibling
+grants need two K8s objects, but both want the same
+`crossplane.io/external-name` value, which only one object can hold via
+`metadata.name` without manually overriding the annotation on every extra
+one. Use [§4.6](#46-many-per-parent-compound-ids--no-field-is-the-sole-identity)
+instead when cardinality is many:1.
+
+**Config:** provider-local `OneOfIdentifier` helper, for the 1:1-cardinality
+case only. Define once in `config/external_name.go`, then use for every
+resource with this pattern.
 
 The helper takes a prefix template and a map of parameter → prefix labels,
 then builds a `TemplatedStringAsIdentifier` with a sorted-key conditional
 chain (`if / else if / end`, no bare else fallback — safe because the
 parameters are ExactlyOneOf).
 
-**Example (Snowflake grant_database_role):**
 ```go
 func OneOfIdentifier(nameField, prefix string, params map[string]string) config.ExternalName {
     keys := slices.Sorted(maps.Keys(params))
@@ -292,18 +332,35 @@ func OneOfIdentifier(nameField, prefix string, params map[string]string) config.
 }
 ```
 
-**Usage:**
+**Usage (shape only, hypothetical placeholder — verify both cardinality
+per the check above AND every object-type literal against the TF SDK's own
+constants before using a real resource here; see step 5 under
+[Verifying the ID format](#verifying-the-id-format)):**
 ```go
-// ID: '<db_role_fqn>|ROLE|<parent_role>' or '|DATABASE_ROLE|<parent_db_role>' or '|SHARE|<share>'
-"snowflake_grant_database_role": OneOfIdentifier("database_role_name",
-    `{{ .external_name }}|`,
+"tf_resource_with_one_grantee_per_identity": OneOfIdentifier("identity_field",
+    `"{{ .external_name }}"|`,
     map[string]string{
-        "parent_role_name":          "ROLE",
-        "parent_database_role_name": "DATABASE_ROLE",
-        "share_name":                "SHARE",
+        "grantee_a": "TYPE_A",
+        "grantee_b": "TYPE_B",
     },
 ),
 ```
+
+> `snowflake_grant_privileges_to_share` was migrated from `OneOfIdentifier`
+> to the §4.6 pattern with `GrantPrivilegesToShareIdentifier()` — same
+> many:1 cardinality fix as the cautionary tale below. `to_share` stays in
+> `spec.forProvider`, allowing multiple grants under one share.
+
+**Cautionary tale:** `snowflake_grant_account_role`,
+`snowflake_grant_application_role`, and `snowflake_grant_database_role` were
+originally modeled this way with `role_name`/`application_role_name`/
+`database_role_name` as `nameField`. Manual testing showed this was wrong —
+those TF resources are used with `for_each` over the grantee (granting one
+role to many parents/users), a many:1 cardinality — and they were migrated
+to the §4.6 pattern. The migration also caught a doc-vs-SDK mismatch: this
+section previously showed `DATABASE_ROLE` (underscore) for
+`grant_database_role`'s object-type literal; the actual
+`sdk.ObjectTypeDatabaseRole` constant is `"DATABASE ROLE"` (space).
 
 When the prefix needs a fixed parameter inline (e.g. `privileges` before the
 conditional chain), include it in the prefix template string.
@@ -313,8 +370,82 @@ conditional branches produces unreadable 400+ char inline template strings.
 The helper compresses the same logic into ~10 readable lines.
 
 **How to verify:** Check the TF source for `ExactlyOneOf` constraints on the
-parameters. The template tests each parameter; at most one will be non-empty.
+parameters, AND confirm cardinality per the check above — `ExactlyOneOf`
+alone doesn't imply 1:1 identity.
 
+### 4.6. Many-per-parent compound IDs — no field is the sole identity
+
+When cardinality is many:1 (§4.5's check fails), no single field is safe as
+`nameField`. Instead, keep every field — including the one that would have
+been `nameField` — as a regular, visible `spec.forProvider` parameter, and
+reconstruct the ID from all of them in Go via a custom `GetIDFn` on top of
+`IdentifierFromProvider`. `DisableNameInitializer: true` (inherited from
+`IdentifierFromProvider`) decouples `metadata.name` from the identity
+entirely — it becomes a free-form K8s name, and each sibling grant is just
+another K8s object.
+
+**Config:** `config.NewExternalNameFrom(config.IdentifierFromProvider,
+config.WithGetIDFn(...))` — the same primitive [pattern 6](#6-variable-structure-compound-ids---id-format-depends-on-block-variant)
+uses for variable-length IDs. The two patterns solve different problems
+(structure varies vs. cardinality is many:1) but share the same mechanism.
+
+**Example (Snowflake `grant_account_role`, fixed from the §4.5 cautionary
+tale):**
+```go
+func buildGrantAccountRoleID(parameters map[string]any) (string, error) {
+    roleName, _ := parameters["role_name"].(string)
+    if roleName == "" {
+        return "", fmt.Errorf("grant_account_role: role_name is required")
+    }
+    var objectType, target string
+    if v, _ := parameters["parent_role_name"].(string); v != "" {
+        objectType, target = "ROLE", v
+    } else if v, _ := parameters["user_name"].(string); v != "" {
+        objectType, target = "USER", v
+    } else {
+        return "", fmt.Errorf("grant_account_role: neither parent_role_name nor user_name is set")
+    }
+    return strings.Join([]string{normalizeSFObjectID(roleName), objectType, normalizeSFObjectID(target)}, "|"), nil
+}
+
+func GrantAccountRoleIdentifier() config.ExternalName {
+    return config.NewExternalNameFrom(config.IdentifierFromProvider,
+        config.WithGetIDFn(func(fn config.GetIDFn, ctx context.Context, externalName string, parameters map[string]any, providerConfig map[string]any) (string, error) {
+            if id, err := buildGrantAccountRoleID(parameters); err == nil && id != "" {
+                return id, nil
+            }
+            return fn(ctx, externalName, parameters, providerConfig)
+        }),
+    )
+}
+```
+
+**Quoting gotcha:** if the TF SDK's encoder quotes every dot-segment via
+`.FullyQualifiedName()` regardless of whether the input arrived quoted or
+bare (see step 5 under [Verifying the ID format](#verifying-the-id-format)),
+your Go builder must reproduce that — not `fmt.Sprintf("%q", v)` on the
+whole string, and not a plain "wrap if it doesn't already start with a
+quote" check, since mixed already-quoted-FQN and bare-name parameters can
+appear across sibling fields of the same resource (e.g. `grant_database_role`
+takes a pre-quoted `"db"."role"` FQN for `database_role_name` alongside a
+bare `parent_role_name`). Write a small `normalizeSFObjectID`-style helper
+that trims any existing quotes per dot-segment and re-wraps each segment,
+so it produces the same output whether the caller passed the segment quoted
+or bare.
+
+**How to verify:** apply two K8s objects with different `metadata.name` but
+the same "identity" field value and different conditional grantee — both
+should reach `SYNCED+READY=True` with distinct `crossplane.io/external-name`
+annotations.
+
+**Upfront trade-off:** this pattern keeps every field as a regular
+`spec.forProvider` parameter instead of tying one to the K8s identity. That
+means ANY change to a field that's part of the compound ID (e.g. changing
+the grantee) forces Terraform to destroy+recreate — there's no in-place
+update path. Upjet unconditionally sets `prevent_destroy: true` on every
+non-deleting resource, so this destroy+create will fail at runtime with
+"Instance cannot be destroyed ... has lifecycle.prevent_destroy set."
+See `references/troubleshooting.md` for the fix (delete MR + recreate).
 
 ### 5. Binding/Attachment resources — parent identity as identifier
 
@@ -349,6 +480,97 @@ the AWS provider's `config/externalname.go`.
 **How to verify:** The TF Create function calls `d.SetId()` with a compound
 string joining parent and child identifiers. The Read function splits on the
 separator (`,` `/` `|`). Expect the same number of parts as the template.
+
+---
+
+### 6. Variable-structure compound IDs — ID format depends on block variant
+
+Some resources have an ID whose **structure** (not just parameter values)
+changes based on which optional block variant is selected. The number of
+pipe-separated segments varies, so a single Go template can't express all
+forms.
+
+**Config:** keep `IdentifierFromProvider` as the base, override `GetIDFn`
+with `config.NewExternalNameFrom` to construct the ID from parameters in Go
+code rather than a template.
+
+**Key difference from 4.5/4.6:** `OneOfIdentifier` (§4.5) handles mutually
+exclusive *scalar parameters* with 1:1 cardinality. §4.6 handles many:1
+cardinality with a *fixed* ID structure. This pattern (6) handles cases
+where the ID's *structure itself* varies by nested block variant (e.g.
+OnObject with 3 extra segments, OnAll with 4 extra) — §4.6's example
+(`grant_account_role`) always has exactly 3 segments; this one doesn't.
+Both patterns that build the ID in Go (§4.6 and §6) share the same
+`NewExternalNameFrom(IdentifierFromProvider, WithGetIDFn(...))` mechanism.
+
+**Runtime:** The TF provider generates the ID on Create; `GetExternalNameFn`
+captures it as the external name. On import, `GetIDFn` reconstructs the same
+ID from `spec.forProvider` parameters.
+
+**Example:** `snowflake_grant_ownership` in the Snowflake provider:
+
+```go
+func GrantOwnershipIdentifier() config.ExternalName {
+    return config.NewExternalNameFrom(config.IdentifierFromProvider,
+        config.WithGetIDFn(func(fn config.GetIDFn, ctx context.Context,
+            externalName string, parameters map[string]any,
+            providerConfig map[string]any) (string, error) {
+            if id, err := buildGrantOwnershipID(parameters); err == nil && id != "" {
+                return id, nil
+            }
+            return fn(ctx, externalName, parameters, providerConfig)
+        }),
+    )
+}
+
+func buildGrantOwnershipID(parameters map[string]any) (string, error) {
+    // Determine role type from mutually-exclusive params
+    var roleType, roleID string
+    if v, _ := parameters["account_role_name"].(string); v != "" {
+        roleType = "ToAccountRole"
+        roleID = v
+    } else if v, _ := parameters["database_role_name"].(string); v != "" {
+        roleType = "ToDatabaseRole"
+        roleID = v
+    }
+    // ... decode "on" block: OnObject vs OnAll vs OnFuture,
+    // each with different segment structure
+}
+```
+
+The ID formats this produces:
+- OnObject:    `ToAccountRole|"role"|COPY|OnObject|SCHEMA|"db"."schema"`
+- OnAll:       `ToAccountRole|"role"|REVOKE|OnAll|TABLES|InDatabase|"db"`
+- OnFuture:    `ToAccountRole|"role"||OnFuture|TABLES|InSchema|"db"."schema"`
+
+**Edge case — scalar parameter changes block sub-type in ID:** Some resources
+produce different ID structures within the same block variant based on a scalar
+parameter. For example, `snowflake_grant_privileges_to_account_role`'s
+`on_schema_object` block with `object_type`+`object_name` produces:
+- `OnSchemaObject|<type>|<name>` when `all_privileges=false`
+- `OnSchemaObject|OnObject|<type>|<name>` when `all_privileges=true`
+
+The `## ID:` comments in TF doc examples expose this; the import docs may
+only show the more explicit form. Pass the scalar into your block-variant
+helper function to control sub-type marker inclusion.
+
+**Extract block-variant helpers across resources:** When the same sub-block
+pattern (e.g. `all`/`future` with `object_type_plural` + `in_database`/`in_schema`)
+appears across multiple resources, extract a shared helper rather than
+duplicating the inline parsing. This keeps the custom `GetIDFn` functions
+focused on the resource-specific block dispatch.
+
+**Not every compound ID needs a custom `GetIDFn`:** A fixed-length compound ID
+whose segments are all direct TF parameters (no blocks) works fine with
+`IdentifierFromProvider` or `TemplatedStringAsIdentifier`. Example:
+`snowflake_tag_association` with 3-part `tag_id|tag_value|object_type`.
+Only dynamic-length IDs (segment count varies by block variant) need the
+custom function.
+
+**How to verify:** The Terraform import section shows multiple ID formats
+with different lengths under one resource (e.g. "OnObject" with 6 segments,
+"OnAll" with 7). A single `TemplatedStringAsIdentifier` cannot cover all
+variants — test by tracing each variant through the custom function.
 
 ---
 
