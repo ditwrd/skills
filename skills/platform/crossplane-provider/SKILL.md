@@ -65,12 +65,16 @@ Completion criterion: resource generates, CRD compiles, and example stages with 
 
 1. **Find the Terraform resource** on the Terraform Registry. Read the import
    section (determines external name format) and argument reference (required fields, ref targets, conflicting arguments).
-2. **Determine plugin type** from TF source: `// @SDKResource` or `// @FrameworkResource`.
-   Plugin type determines execution path: SDK/Framework resources use in-process
-   Go SDK/gRPC and support `TerraformConfigurationInjector` and
-   `TerraformCustomDiff`; CLI-path resources (default `IncludeList`) fork a
-   `terraform` subprocess and those hooks are no-ops.
-   See `references/resource-configuration.md#execution-paths`.
+2. **Default to the no-fork (in-process) path** — faster than CLI-fork (no
+   subprocess spawn, no `main.tf.json` round-trip) and unlocks
+   `TerraformConfigurationInjector`/`TerraformCustomDiff`. From TF source:
+   `// @SDKResource` → `TerraformPluginSDKIncludeList`; `// @FrameworkResource`
+   → `TerraformPluginFrameworkIncludeList`. Stay on the CLI path only per the
+   exceptions in
+   `references/resource-configuration.md#decision-which-path-for-a-new-brownfield-resource`
+   (import fails cleanly, or provider isn't wired for no-fork yet and
+   migrating it is out of scope — see
+   `references/resource-configuration.md#provider-wide-no-fork-in-process-migration`).
 3. **Add external name config** in the correct config map:
    - **`// @SDKResource`** → `TerraformPluginSDKExternalNameConfigs`
    - **`// @FrameworkResource`** → `TerraformPluginFrameworkExternalNameConfigs`
@@ -83,16 +87,12 @@ Completion criterion: resource generates, CRD compiles, and example stages with 
    `ParameterAsIdentifier("field")` (a spec field IS the ID).
    Always trace `d.SetId()` in the TF Create function to verify the runtime ID.
 4. **Check TF schema for sentinel defaults** — scan optional fields whose
-   Default would fail the provider's own `ValidateFunc`/`ValidateDiagFunc`
-   (e.g. `"default"` string with boolean validation, `-1` int with
-   `IntAtLeast(0)`). See `references/resource-configuration.md#sentinel-default-values`
-   for the full fix pattern. All paths need `LateInitializer.IgnoredFields`
-   (this is the critical fix — without it, every reconcile after the first
-   Create fails). A schema Default override and
-   `TerraformConfigurationInjector` are only needed for SDK/Framework-path
-   resources; CLI-path resources (the default `IncludeList` matching `.+`)
-   can skip both — `IgnoredFields` alone prevents the field from entering
-   `main.tf.json`.
+   Default would fail the provider's own `ValidateFunc`/`ValidateDiagFunc`.
+   See `references/resource-configuration.md#sentinel-default-values`. All
+   paths need `LateInitializer.IgnoredFields` (critical — without it every
+   reconcile after the first Create fails); the no-fork path additionally
+   needs a schema Default override and `TerraformConfigurationInjector`
+   (CLI-path resources skip both — `IgnoredFields` alone suffices there).
 5. **Run `make generate`**. Verify generated files: `apis/`, `internal/controller/`,
    `package/crds/`, `examples-generated/`. If a resource is silently skipped,
    `check-diff` fails, or the scraper produces broken YAML, see

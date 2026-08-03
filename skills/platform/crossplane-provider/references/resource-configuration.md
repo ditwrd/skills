@@ -140,8 +140,102 @@ Which path a resource uses determines what config hooks are available:
 Resources are mutually exclusive across lists — matching more than one causes a
 panic in `NewProvider()`. Resources matching none are silently skipped.
 
-The `IncludeList` default of `.+` means every resource is CLI-path by default
-unless explicitly added to an SDK or Framework include list.
+**Prefer the SDK/Framework in-process path as the default** for any
+provider that has already wired `WithTerraformProvider(...)` (see
+[Provider-wide no-fork migration](#provider-wide-no-fork-in-process-migration)
+below) — it's meaningfully faster than the CLI path (no subprocess spawn,
+no `main.tf.json` round-trip per reconcile) and unlocks
+`TerraformConfigurationInjector`/`TerraformCustomDiff`. The `.+` default on
+`IncludeList` is upjet's out-of-the-box behavior for providers that have
+never wired an in-process path, not a recommendation to stay on it.
+
+### Decision: which path for a new brownfield resource?
+
+If the provider is already wired for no-fork (`WithTerraformProvider(...)`
+set in `config/provider.go`), add every new resource to
+`TerraformPluginSDKIncludeList` (or `TerraformPluginFrameworkIncludeList`
+for `// @FrameworkResource` sources) by default — this is exactly the `add`
+branch, step 2, no extra provider-level wiring needed. Reasons to leave a
+specific resource on the CLI path instead:
+
+1. **The TF provider's Go package can't be imported cleanly** — e.g. a
+   `go.mod` major-version bug (see below), a proprietary/vendored-only
+   provider, or a provider whose `Provider()` constructor requires
+   arguments/state the codegen tool can't supply. CLI path has no import
+   requirement — it only needs the downloaded binary.
+2. **A one-off resource in an otherwise CLI-fork provider, not worth the
+   provider-wide migration** — moving a single resource without first
+   completing the provider-wide wiring (below) is not possible; the SDK
+   path is all-or-nothing at the provider level for whichever resources you
+   list. If the provider isn't already wired for no-fork and migrating it
+   isn't in scope for this change, stay on the CLI path.
+
+If the provider has **never** wired an in-process path before, see the next
+section — moving even one resource requires the full provider-level setup.
+
+### Provider-wide no-fork (in-process) migration
+
+Moving resources onto `TerraformPluginSDKIncludeList` only works if the
+provider is wired for it. This is a provider-level change touching three
+files, not just a resource config — do all of it, not a subset, or the
+provider panics or silently never configures the TF plugin:
+
+1. **`config/provider.go`** (`GetProvider()`/`GetProviderNamespaced()`):
+   ```go
+   ujconfig.WithIncludeList([]string{}),  // MUST be explicit — see gotcha below
+   ujconfig.WithTerraformPluginSDKIncludeList(ExternalNameConfigured()),
+   ujconfig.WithTerraformProvider(sfprovider.Provider()),  // the TF provider's own Provider() constructor
+   ```
+   **Gotcha**: `NewProvider()` defaults `IncludeList` to `[]string{".+"}`
+   (match-all) regardless of other lists set. If every resource is meant to
+   go through the SDK path, `IncludeList` must be explicitly emptied —
+   otherwise every resource matches both lists and `NewProvider()` panics at
+   startup (a resource may match only one of the three include lists).
+2. **`internal/clients/<provider>.go`** (`TerraformSetupBuilder`): after
+   building `ps.Configuration`, configure the live provider directly —
+   the CLI path never needed this because the `terraform` binary did it:
+   ```go
+   diags := ujprovider.TerraformProvider.Configure(ctx, &tfsdk.ResourceConfig{Config: ps.Configuration})
+   if diags.HasError() {
+       return ps, errors.Errorf("cannot configure terraform provider: %v", diags)
+   }
+   ps.Meta = ujprovider.TerraformProvider.Meta()
+   ```
+3. **`cmd/provider/main.go`**: call `config.GetProvider()` (and
+   `GetProviderNamespaced()`) **exactly once per scope**, and thread the
+   *same* `*ujconfig.Provider` pointer into both `tjcontroller.Options.Provider`
+   and `clients.TerraformSetupBuilder(..., provider)`. Two separate
+   `GetProvider()` calls build two independent `*schema.Provider` instances —
+   configuring one never sets `.Meta()` on the other, and every reconcile
+   fails with an unconfigured-provider error. Also add
+   `OperationTrackerStore: tjcontroller.NewOperationStore(log)` to
+   `Options` — required by `NewTerraformPluginSDKAsyncConnector` to track
+   in-flight Create/Update/Delete across reconcile iterations; the CLI path
+   has no equivalent because a subprocess is inherently one-shot per call.
+
+Keep the codegen-time provider schema (`config/schema.json`, built from the
+downloaded native binary) and the runtime Go library version
+(`go.mod`/`go.sum`) pinned to the **same** upstream release — the no-fork
+connector asserts the CRD's generated schema matches
+`TerraformProvider.ResourcesMap[name]` at runtime.
+
+**If the TF provider's own `go.mod` has a missing major-version suffix**
+(a `v2.x`+ tag still declaring `module .../repo` instead of `.../repo/v2` —
+a real bug in some providers, confirmed in `terraform-provider-snowflake`
+through v2.19.0), `go get` fails with `invalid version: module contains a
+go.mod file, so module path must match major version` and no tag fixes it.
+Workaround: vendor the tagged source, patch the module line and internal
+imports to add the missing suffix, and `replace` it with a local directory
+target — Go's module resolver skips the major-version check for local
+`replace` targets. Script the fetch+patch for reproducibility; remove it
+once upstream corrects their `go.mod`.
+
+**Verify the migration took effect**: read a generated
+`internal/controller/**/zz_controller.go` for a moved resource — it should
+call `tjcontroller.NewTerraformPluginSDKConnector` or
+`NewTerraformPluginSDKAsyncConnector`, not `tjcontroller.NewConnector`
+(the CLI-path connector).
+
 
 ### Detecting the execution path
 

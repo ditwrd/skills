@@ -283,6 +283,49 @@ Most resources use the CLI path by default unless explicitly moved to SDK
 or Framework include lists. If a resource doesn't appear in any include
 list, it's skipped silently.
 
+## Provider panics at startup after moving resources to SDK/Framework path
+
+**Symptom:** Provider binary panics immediately on boot after adding
+`WithTerraformPluginSDKIncludeList(...)` (or Framework equivalent) to
+`config/provider.go`. Panic message references a resource matching more
+than one include list.
+
+**Root cause:** `NewProvider()` defaults `IncludeList` to `[]string{".+"}`
+(match-all) independent of any other list you set. Adding
+`TerraformPluginSDKIncludeList`/`TerraformPluginFrameworkIncludeList`
+without also setting `WithIncludeList([]string{})` makes every listed
+resource match both — a hard error, not a skip.
+
+**Fix:** Explicitly set `ujconfig.WithIncludeList([]string{})` whenever
+`IncludeList` should stop matching anything (i.e. when moving resources
+wholesale off the CLI path — the recommended default). See
+`references/resource-configuration.md#provider-wide-no-fork-in-process-migration`.
+
+## Reconcile fails with "cannot configure terraform provider" (no-fork path)
+
+**Symptom:** Every resource on `TerraformPluginSDKIncludeList` fails
+Observe/Create with an unconfigured-provider error, even though
+`ProviderConfig` credentials are valid and CLI-path resources in the same
+provider work fine.
+
+**Root cause 1:** `TerraformSetupBuilder` builds `ps.Configuration` but
+never calls `ujprovider.TerraformProvider.Configure(...)` /
+`.Meta()` — the CLI path never needed this (the `terraform` binary
+configures itself), but the in-process path does.
+
+**Root cause 2:** `cmd/provider/main.go` calls `config.GetProvider()`
+twice — once for `tjcontroller.Options.Provider`, once for the setup
+builder — producing two independent `*schema.Provider` instances.
+Configuring one never sets `.Meta()` on the other, since generated
+controllers read `o.Provider.Resources[name]` from the instance passed to
+`Options`.
+
+**Fix:** Call `GetProvider()`/`GetProviderNamespaced()` exactly once per
+scope in `main.go`; pass that same pointer to both `Options.Provider` and
+`TerraformSetupBuilder(...)`. See
+`references/resource-configuration.md#provider-wide-no-fork-in-process-migration`.
+
+
 ## Config changes not reflected after code edit
 
 **Symptom:** You edit config Go code (`TerraformConfigurationInjector`,
