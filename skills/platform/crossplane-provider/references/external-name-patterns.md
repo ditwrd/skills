@@ -447,6 +447,39 @@ non-deleting resource, so this destroy+create will fail at runtime with
 "Instance cannot be destroyed ... has lifecycle.prevent_destroy set."
 See `references/troubleshooting.md` for the fix (delete MR + recreate).
 
+**Gocyclo pitfall:** the `buildGrantAccountRoleID` example above has only
+two mutually-exclusive targets, so an `if / else if / else` chain reads
+fine. Real grant resources often have far more — `grant_privileges_to_share`'s
+`on_*` block has seven (`on_database`, `on_function`, `on_schema`,
+`on_table`, `on_all_tables_in_schema`, `on_tag`, `on_view`). Seven
+`if field != "" { return ... }` statements pass `go vet` and `make generate`
+but trip golangci-lint's `gocyclo` (complexity > 10) — caught only by
+`make lint`, not build or generate. Fix: replace the if-chain with a loop
+over a small dispatch table:
+
+```go
+var shareOnFields = []struct{ key, label string }{
+    {"on_database", "OnDatabase"},
+    {"on_function", "OnFunction"},
+    {"on_schema", "OnSchema"},
+    {"on_table", "OnTable"},
+    {"on_all_tables_in_schema", "OnAllTablesInSchema"},
+    {"on_tag", "OnTag"},
+    {"on_view", "OnView"},
+}
+
+for _, f := range shareOnFields {
+    if v, _ := parameters[f.key].(string); v != "" {
+        return fmt.Sprintf("%s|%s|%s", base, f.label, v), nil
+    }
+}
+```
+
+Extract any surrounding multi-branch formatting logic (e.g. privilege-list
+sorting) into its own named function too — `gocyclo` counts per function,
+so splitting one builder into `formatXPrivileges` + `buildXID` is often
+enough on its own.
+
 ### 5. Binding/Attachment resources — parent identity as identifier
 
 Resources that "attach" or "bind" one resource to another (policy attachments,

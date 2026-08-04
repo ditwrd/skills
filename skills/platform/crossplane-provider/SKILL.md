@@ -128,8 +128,7 @@ Completion criterion: each listed concern is addressed or explicitly deferred.
    refresh failed:`. See `references/resource-configuration.md#late-initialization`
    for config details and `references/troubleshooting.md#late-init-conflicts`
    for the error pattern.
-4. **Diff suppression** — `r.TerraformCustomDiff` suppresses false diffs when
-   TF computes zero-count for unset blocks (SDK path only).
+4. **Diff suppression** — `r.TerraformCustomDiff` suppresses false diffs when TF computes zero-count for unset blocks (SDK path only). `ResourceDiff.Clear`/`.SetNew` inside it only work on `Computed: true` fields — for a ForceNew field Read() never re-sets, see `references/troubleshooting.md`.
 5. **Move to status** — `config.MoveToStatus(r.TerraformResource, "field")`
    moves sub-resource-managed fields out of the desired spec.
 6. **Pre-reconcile init** — `r.InitializerFns` for custom logic that runs

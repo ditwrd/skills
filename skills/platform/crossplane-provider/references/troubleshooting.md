@@ -223,6 +223,76 @@ provider has a separate resource for the same sub-aspect. The upjet
 guide flags this as "Warning boxes" — fields mutually exclusive with other
 resources should use `MoveToStatus`.
 
+
+## Resource permanently refuses update — ForceNew field never re-populated by Read()
+
+**Symptom:** `Synced=False` forever (not a perpetual-but-harmless update loop —
+every reconcile hard-fails), error:
+```
+async update failed: refuse to update the external resource because the
+following update requires replacing it: cannot change the value of the
+argument "X" from "" to "false"
+```
+No user ever changed `X` in `spec.forProvider` — it may not even appear there.
+
+**Root cause:** `X` is `ForceNew` in the TF schema, but the vendored
+provider's `Read` function never calls `d.Set("X", ...)` on refresh — only its
+`Import` function derives `X` (typically parsed from the resource's own
+compound ID). Confirm by reading the TF provider source: compare the
+`Read*`/`Import*` functions for the resource; if `Read*` sets fewer fields
+than `Import*` sets, this is the bug. Every reconcile, upjet's diff-vs-state
+computation sees `X` as permanently unset (`Old:""` in the raw
+`terraform.InstanceDiff`, visible with `-d`) versus the config-resolved
+default — and since `X` is ForceNew, upjet's `assertNoForceNew` guard refuses
+the update forever. Distinct from
+[Update blocked by lifecycle.prevent_destroy](#update-blocked-by-lifecycleprevent_destroy):
+that case has no Update function at all; this resource has one, but one field
+is falsely flagged as changing.
+
+**Two dead ends — verify against a real running provider, not just unit
+tests, before trusting either:**
+
+1. A `managed.Initializer` (`r.InitializerFns`) backfilling `status.atProvider`
+   before Observe only fixes the **cold-cache** case (right after a provider
+   restart). Upjet's `terraformPluginSDKExternal` only reconstructs its
+   Terraform state seed from `atProvider` in `Connect()` when its per-resource
+   operation-tracker cache (`OperationTrackerStore`) is empty. Once a resource
+   is created (or observed) once in a running process, that cache stays warm
+   for the process's lifetime and every later `Observe` seeds its diff from
+   the cached (still-incomplete) state, bypassing `atProvider` entirely. A fix
+   that passes right after `make run` and fails on a freshly-created resource
+   in the same still-running process is this trap.
+2. `TerraformCustomDiff` reaching for `ResourceDiff.Clear(key)` or
+   `.SetNew(key)` fails immediately — both require the schema field to be
+   `Computed: true` (a hard `checkKey()` error in
+   `terraform-plugin-sdk/v2` otherwise). Most fields hit by this bug are
+   `Optional + Default + ForceNew`, not `Computed`, so this natural first
+   instinct is a dead end.
+
+**Fix:** Wrap `r.TerraformResource.ReadContext` — a mutable function field on
+the already-live `*schema.Resource`, set once at provider-config time
+(`AddResourceConfigurator`/`WithDefaultResourceOptions`), not a vendored
+source edit:
+```go
+p.AddResourceConfigurator("some_resource", func(r *config.Resource) {
+    orig := r.TerraformResource.ReadContext
+    r.TerraformResource.ReadContext = func(ctx context.Context, d *schema.ResourceData, meta any) diag.Diagnostics {
+        diags := orig(ctx, d, meta)
+        if diags.HasError() || d.Id() == "" {
+            return diags // real error, or upstream deletion — nothing to backfill
+        }
+        // Backfill X the same way Import derives it (e.g. parsed from d.Id()).
+        _ = d.Set("X", deriveXFromID(d.Id()))
+        return diags
+    }
+})
+```
+This works for both cache states: upjet's `Observe()` diffs against the state
+returned by `RefreshWithoutUpgrade` — which invokes `ReadContext` — computed
+**after** the refresh and **before** the diff call. The wrapped `Read`
+therefore corrects the seed on every reconcile, whether `Connect()`
+reconstructed it from `atProvider` or reused the warm operation-tracker cache.
+
 ## Out-of-band changes absorbed by late init, not reverted
 
 **Symptom:** You change a resource field via the cloud console/UI (not the CR).
@@ -383,6 +453,13 @@ observe failed: cannot run plan: plan failed: Instance cannot be destroyed:
 Resource <type>.<name> has lifecycle.prevent_destroy set, but the plan calls
 for this resource to be destroyed.
 ```
+
+If the error instead says `refuse to update the external resource ... cannot
+change the value of the argument` (no `lifecycle.prevent_destroy` mention),
+see
+[Resource permanently refuses update — ForceNew field never re-populated by Read()](#resource-permanently-refuses-update--forcenew-field-never-re-populated-by-read)
+instead — that resource has an Update function; one field is falsely flagged
+as changing.
 
 **Root cause:** Upjet unconditionally sets `"prevent_destroy": true` in the
 generated Terraform HCL for every resource that is NOT currently being deleted
