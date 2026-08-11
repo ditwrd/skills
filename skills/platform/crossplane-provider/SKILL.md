@@ -4,8 +4,8 @@ description: >
   Scaffolds or extends a Crossplane provider from a Terraform provider
   via code generation. Use when scaffolding a new provider (greenfield),
   adding a resource, configuring a resource, testing, debugging a
-  broken resource, migrating from classic providers, or upgrading CRD
-  versions.
+  broken resource, migrating from classic providers, upgrading CRD
+  versions, or bumping the upjet/crossplane-runtime dependency version.
 ---
 # Upjet-based Crossplane providers
 
@@ -184,7 +184,10 @@ r.PreviousVersions = []string{"v1alpha1"}
 r.Conversions = []config.Conversion{{FromVersion: "v1alpha1", ToVersion: "v1beta1", ConvertFn: convertV1Alpha1ToV1Beta1}}
 ```
 
-See `references/upgrade.md` for auto-conversion (schemadiff) and upjet v1→v2 migration details.
+See `references/upgrade.md` for auto-conversion (schemadiff), upjet v1→v2
+migration, and upjet dependency version bumps (compat pinning across
+crossplane-runtime/controller-runtime/k8s.io, and the v2.3.0 webhook wiring
+change) details.
 
 ### migrate — classic to upjet migration
 
