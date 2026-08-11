@@ -122,7 +122,7 @@ with open('$WS/terraform.tfstate') as f:
 
 # Extract resource attributes from config (skip meta-args)
 config_attrs = {}
-for _, cfg in config.get('resource',{}).get('snowflake_user',{}).items():
+for _, cfg in config.get('resource',{}).get('<tf_resource_type>',{}).items():
     config_attrs = {k:v for k,v in cfg.items()
         if k not in ('provider','_meta','lifecycle')}
 
@@ -408,7 +408,7 @@ is stale. `make run` rebuilds on restart, but a direct `go build ./cmd/provider`
 places the binary elsewhere. The provider must be rebuilt and restarted.
 
 **Fix:**
-1. `pkill -f "provider.*snowflake"` (or the provider name)
+1. `pkill -f "provider.*<provider-name>"`
 2. `go build -o _output/bin/linux_amd64/provider ./cmd/provider/...`
 3. `make run` (or run the binary directly with the required flags)
 4. If a resource is stuck in deletion with a finalizer, force-remove it:
@@ -444,6 +444,93 @@ or the resource is destroyed and recreated on every reconcile.
    `FrameworkResourceWithComputedIdentifier` or
    `identifierFromProviderWithDefaultStub`.
 
+## Mutually exclusive TF schema fields both set — one silently dropped
+
+**Symptom:** A resource with sibling optional fields inside one block (e.g.
+two mutually exclusive "target" fields such as an "all matching objects"
+field and a "future matching objects" field) reconciles to
+`Synced=True Ready=True`, but only one of the two intended behaviors
+actually took effect — e.g. the "future" variant never appears in the cloud
+provider, even though the CR spec requests it.
+
+**Root cause:** The Terraform schema marks the sibling fields
+`ExactlyOneOf` (grep the vendored provider source for the field name to find
+the constraint list). The generated CRD carries no equivalent validation, so
+`kubectl apply` accepts both fields set in the same block. The provider's
+internal build-switch (whatever code turns the block into a TF/API request)
+takes the first matching case in source order and ignores the rest — no
+error, no diff, just a quietly incomplete request.
+
+**Detection:** Read the TF resource source for `ExactlyOneOf`/`ConflictsWith`
+entries covering the block in question; compare against the applied YAML. If
+more than one of the listed fields is set, this bug applies regardless of
+what the status conditions say.
+
+**Fix:** Split into one resource per exclusive variant — one resource per
+field, never both set in the same block. If the repo already has an
+analogous split for a sibling resource, mirror its naming convention.
+
+**Prevention:** When wiring or reviewing a resource whose schema has
+`ExactlyOneOf`/`ConflictsWith` groups, treat CRD field presence as
+*unenforced advice*, not validation — the same gap as unvalidated enum-style
+string fields (see
+[External name misconfiguration](#external-name-misconfiguration) and
+[Delete fails with empty identifier](#delete-fails-with-empty-identifier-after-patching-a-bulk-grant-resource-under-deletion)
+for related CRD-validation-gap bugs). Add an admission-time check only if this
+repeatedly bites; otherwise document the constraint in the example/README.
+
+## Delete fails with empty identifier after patching a bulk-grant resource under deletion
+
+**Symptom:** A bulk/wildcard-target resource (a grant, attachment, or
+similar resource whose spec targets "all"/"future" matching objects rather
+than one named object) is stuck with `deletionTimestamp` set and a `Delete`
+error mentioning an empty or malformed identifier, e.g.
+`incompatible identifier: ` or similar "identifier is empty/invalid" text.
+This typically follows a `spec.forProvider` patch applied to the resource
+**while it already had a `deletionTimestamp`** (e.g. to fix an invalid value
+caught only at apply/delete time — see
+[External name misconfiguration](#external-name-misconfiguration) for the
+class of bug that often triggers the patch in the first place).
+
+**Root cause:** The vendored TF provider's `Read` function is a documented
+no-op for the "all"/"future" bulk-target configuration of this resource (grep
+the source near the refresh/show-request builder for a comment like "read is
+a no-op for this configuration" or "changes will not be detected"). Patching
+the spec changes upjet's computed Terraform ID mid-flight; the next `Observe`
+refreshes state under the new ID, but the no-op `Read` never repopulates the
+resource's identifying fields, so the refreshed state comes back empty.
+`Delete` then builds its revoke/detach request from that empty state and
+fails parsing an empty identifier.
+
+**Detection:** Compare `metadata.annotations['crossplane.io/external-name']`
+(frozen at creation), `status.atProvider.id` (mirrors external-name), and
+current `spec.forProvider`. If external-name/status still hold the pre-patch
+value while spec holds the patched value, and the resource is a bulk/wildcard
+grant kind with a documented no-op `Read`, this bug applies.
+
+**Fix:** Not recoverable via the provider's own Delete path — the tracked TF
+state is already corrupted. Force-remove the finalizer:
+```shell
+kubectl patch <resource>.<group>.<provider> -n <ns> <name> \
+  --type=merge -p '{"metadata":{"finalizers":[]}}'
+```
+Acceptable when the underlying grant/attachment was created with an
+already-invalid value (the intended revoke was never going to succeed
+cleanly anyway); follow up with manual cleanup on the provider's side if
+needed.
+
+**Prevention:** Never patch `spec.forProvider` on a bulk/wildcard grant kind
+that already has `deletionTimestamp` set — delete and recreate with the
+corrected spec instead, so the new resource gets a fresh ID with no
+state-desync window. Also note: CRD string fields that mirror free-text TF
+schema arguments carry **no enum validation** even when the TF provider only
+accepts specific literal forms — a successful `kubectl apply` proves nothing
+about API-level correctness; verify against the TF provider's argument
+reference. For a concrete instance of this bug (Snowflake's
+`on_all`/`on_future` grant kinds and the `objectTypePlural` enum gap), see
+[`snowflake-provider-notes.md`](snowflake-provider-notes.md#delete-fails-with-empty-identifier-after-patching-an-on_all-on_future-grant-under-deletion).
+
+
 ## Update blocked by lifecycle.prevent_destroy
 
 **Symptom:** The resource's `status.conditions` shows `Synced=False` with a
@@ -470,8 +557,8 @@ changes.
 The error fires when a spec field change causes Terraform's plan to show
 destroy+create instead of an in-place update. This happens for any resource
 whose TF provider has **no Update function** (only Create and Delete — e.g.
-grant/attachment resources like `snowflake_grant_account_role`, policy
-attachments, role associations). The only way to "update" such a resource in
+grant/attachment resources like account-role grants, IAM policy attachments,
+or role associations). The only way to "update" such a resource in
 Terraform is to destroy the old and create a new one.
 
 **Detection:** Read the error from the resource's Synced condition:
@@ -492,6 +579,34 @@ destroys the old resource (REVOKE) and creates the new one (GRANT).
 
 **Upjet reference:** upjet's `docs/testing-with-uptest.md` documents this as a
 known error case under "prevent_destroy Case".
+
+## `CannotUpdateManagedResource` warning — benign resourceVersion conflict
+
+**Symptom:** A Warning event with reason `CannotUpdateManagedResource` and
+message `Operation cannot be fulfilled on <resource>.<group> "<name>": the
+object has been modified; please apply your changes to the latest version and
+try again`. `Synced`/`Ready` remain (or return to) `True`.
+
+**Root cause:** This is `crossplane-runtime`'s managed reconciler
+(`pkg/reconciler/managed/reconciler.go`, `reasonCannotUpdateManaged`) losing a
+standard Kubernetes optimistic-concurrency race: it read the object, did
+work, then tried its own `client.Update` (writing a finalizer, an
+external-name/late-init annotation, or the spec) — but something else
+(another `kubectl apply`/`patch`, a concurrent reconcile) bumped
+`resourceVersion` first. Every call site that emits this reason returns
+`Requeue: true` — it is not a reconcile failure, just a retry signal.
+
+**Detection:** Reason string alone disambiguates it from a real failure —
+`CannotUpdateExternalResource` (or any `async create/update/delete failed`
+message) means the Terraform/cloud-API call itself failed;
+`CannotUpdateManagedResource` means only the local Kubernetes object write
+raced. Confirm by checking `event.count`/`lastTimestamp` against any manual
+`kubectl apply`/`patch` issued around the same second, and verifying the
+resource is `Synced=True Ready=True` on the next `kubectl get`.
+
+**Fix:** None needed — it self-heals on the next requeue. If it recurs
+continuously (not just around a manual edit), suspect two controllers or two
+reconcile loops racing the same object, not this benign case.
 
 ## Framework/SDK include list mismatch
 
@@ -526,7 +641,7 @@ import yaml
 with open('config/provider-metadata.yaml') as f:
     data = yaml.safe_load(f)
 for name in sorted(data.get('resources', {})):
-    stripped = name.replace('snowflake_', '', 1)  # change to your prefix
+    stripped = name.replace('<tf_provider_prefix>_', '', 1)  # e.g. "aws_", "azurerm_", "snowflake_"
     kind = ''.join(p.capitalize() for p in stripped.split('_'))
     print(kind, name)
 " | sort | uniq -d   # --repeated shows collisions
@@ -537,7 +652,7 @@ appends to the second Kind on collision.
 
 **Fix:** Set explicit `r.Kind` on BOTH the cluster and namespaced configurators:
 ```go
-p.AddResourceConfigurator("snowflake_legacy_service_user", func(r *config.Resource) {
+p.AddResourceConfigurator("<tf_resource_name>", func(r *config.Resource) {
     r.ShortGroup = "user"
     r.Kind = "LegacyServiceUser"
 })
@@ -549,7 +664,7 @@ p.AddResourceConfigurator("snowflake_legacy_service_user", func(r *config.Resour
 Make generates successfully, but lint fails because the generated package can't be imported.
 
 **Root cause:** A TF resource name contains `internal` (e.g.
-`snowflake_stage_internal`). The generator produces a package directory
+`<provider>_stage_internal`). The generator produces a package directory
 `internal/` inside the controller tree. Go's `internal` visibility rule blocks
 imports from sibling packages — the `zz_setup.go` at
 `internal/controller/namespaced/` can't import from
@@ -563,7 +678,7 @@ ls package/crds/*_internals.yaml
 
 **Fix:** Override the Kind to a name that doesn't lower-case to `internal`:
 ```go
-p.AddResourceConfigurator("snowflake_stage_internal", func(r *config.Resource) {
+p.AddResourceConfigurator("<tf_resource_name>", func(r *config.Resource) {
     r.ShortGroup = shortGroup
     r.Kind = "StageInternal"
 })

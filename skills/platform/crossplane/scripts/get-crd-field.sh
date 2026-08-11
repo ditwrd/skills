@@ -2,6 +2,8 @@
 # Inspect an installed provider CRD's OpenAPI schema.
 # Usage: ./get-crd-field.sh <crd-name> [jsonpath]
 # Example: ./get-crd-field.sh dbinstances.rds.aws.m.upbound.io
+# Example (confirm the exact Kind before templating it — acronyms aren't naive PascalCase):
+#   ./get-crd-field.sh bucketacls.s3.aws.m.upbound.io '{.spec.names.kind}'
 
 CRD="${1:-}"
 PATH_ARG="${2:-.spec.versions[0].schema.openAPIV3Schema}"

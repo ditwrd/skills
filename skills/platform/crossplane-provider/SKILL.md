@@ -21,7 +21,8 @@ When a pattern isn't covered, study the reference providers:
 See [`references/provider-patterns.md`](references/provider-patterns.md) for a
 side-by-side comparison of how each provider handles external names, including
 provider-specific helpers, template formats, and pattern frequency.
-For runtime errors: `references/troubleshooting.md`.
+For runtime errors: `references/troubleshooting.md`. Provider-specific
+incident notes (e.g. Snowflake): `references/snowflake-provider-notes.md`.
 ## Branches
 
 Every upjet workflow starts at the Terraform Registry. The resource's **import

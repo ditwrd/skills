@@ -12,6 +12,9 @@ kubectl get mrd dbinstances.rds.aws.m.upbound.io -o jsonpath='{.spec.state}'
 kubectl patch mrd dbinstances.rds.aws.m.upbound.io \
   --type='merge' -p='{"spec":{"state":"Active"}}'
 
+# Confirm the exact Kind string before templating it — acronyms aren't naive PascalCase (bucketacls -> BucketACL, not BucketAcl)
+kubectl get crd dbinstances.rds.aws.m.upbound.io -o jsonpath='{.spec.names.kind}'
+
 # Dump the schema
 kubectl get crd dbinstances.rds.aws.m.upbound.io -o jsonpath='{.spec.versions[0].schema.openAPIV3Schema}' | jq
 
