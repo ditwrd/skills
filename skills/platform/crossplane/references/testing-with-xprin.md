@@ -168,24 +168,22 @@ Rules of thumb:
 - `FieldExists` without a subsequent `FieldValue` is a regression guard for field removal; `FieldValue` without `FieldExists` crashes on nil. Pair them.
 - For resources with auto-generated names (no explicit `metadata.name` in the template), use `FieldValue` with a wildcard pattern (`Policy/*`) — the assertion applies to every match.
 
+**`NotExists` checks resource-level absence, not field-level.** `{type: NotExists, resource: "Queue/my-queue"}` asserts no resource matches the pattern. There is no field-level "this field must be absent" assertion — `{type: NotExists, resource: "...", field: "..."}` is not a supported combination; xprin ignores `field` and evaluates it as a resource-presence check. To guard against a field leaking onto the wrong resource variant, assert the correct variant's expected value with `FieldValue` instead; a field-drop regression on an optional field isn't testable directly with this xprin version.
+
 Pass 2's `observed-resources` is a synthetic YAML that mirrors what the provider would have observed after the underlying resources exist in AWS. Each entry needs:
 - The `crossplane.io/composition-resource-name: <key>` annotation matching what step 1 set via `setResourceNameAnnotation`
 - `status.atProvider.<field>` populated with the values step 2 expects to read
 - `status.conditions[type=Ready]=True` so the auto-ready step considers them ready
 
-## Inspect rendered output (cp-hook trick)
+## Inspect rendered output
 
-`--show-render` lists resources by Kind/Name but xprin cleans up the temp dir immediately, so you can't see the full YAML. Add a post-test hook to copy it before cleanup:
+`--show-render` lists resources by Kind/Name but xprin cleans up the temp dir immediately, so you can't see the full YAML. **`hooks:` (top-level or under `common:`) does not execute on xprin v0.2.0** — confirmed: a `post` hook shelling out to `cp`/`echo` produces no file, no error, and no trace under `-v`, `--debug`, or `--show-hooks`. Do not rely on it.
 
-```yaml
-hooks:
-  post:
-    - run: "cp /tmp/xprin-testcase-*/outputs/rendered.yaml ./last-render.yaml"
-```
+For the full rendered YAML, run `crossplane render` directly with the same inputs (`scripts/render.sh xr.yaml composition.yaml functions.yaml`) — it prints the complete manifest to stdout, no cleanup step to race against.
 
 ## When to use xprin vs raw `crossplane render`
 
-Use xprin instead of `crossplane render` when you need any of: assertions on rendered output, golden-file diffs, pre/post test hooks, test chaining via artifact export (`id` + `.Tests.{id}.Outputs.*`), `common` sections to share inputs across cases, or `go test`-style CI output. It is NOT a cluster e2e test — it mocks the cluster and runs Functions locally via Docker.
+Use xprin instead of `crossplane render` when you need any of: assertions on rendered output, golden-file diffs, test chaining via artifact export (`id` + `.Tests.{id}.Outputs.*`), `common` sections to share inputs across cases, or `go test`-style CI output. It is NOT a cluster e2e test — it mocks the cluster and runs Functions locally via Docker.
 
 Pinning: xprin v0.2+ supports Crossplane v2. Its `tests` block accepts the same v2 XRD `apiVersion`. For v1-only assertions on v2 XRDs, run `crossplane render` directly with the version pin from `scripts/render.sh`.
 
@@ -197,5 +195,6 @@ Pinning: xprin v0.2+ supports Crossplane v2. Its `tests` block accepts the same 
 - **Without `--crossplane-version`**, the engine inside Docker can disagree with the host CLI on feature behaviour. Pin it in both `subcommands.render` and `subcommands.validate`.
 - **One test pass is not enough for multi-step compositions.** Step 2+ nil-guards on the first reconcile; the dependent resources never emit unless you give xprin a synthetic `observed-resources` in a second test case. See the two-reconcile test pattern above.
 - **XRD schema violations in example XRs silently pass.** `crossplane render` runs the pipeline templates against the input XR without validating it against the XRD schema. If you rename or remove a field (e.g. `suffix:` → `filters:`), stale example XRs with the old field won't fail — the composition just ignores the unknown field. Always check example XRs match the XRD when changing the schema.
+- **No expect-failure assertion type.** `xprin test --help` has no flag for "this render should error," and `make test`'s `xprin test ... || exit 1` per module treats any nonzero exit as a hard break. A `{{ fail "..." }}` template guard can't be committed as a permanent case in the regular suite. Verify it manually with a throwaway `*_xprin.yaml` (outside `tests/`, or deleted before committing), confirm the nonzero exit and error message, then remove the scratch file — `make test`'s glob (`modules/*/*`) would otherwise break on every run.
 - **`xprin test` fails with "crossplane: command not found"** — install the `crossplane` CLI 1.15+ and ensure it's on PATH, or set the path in `~/.config/xprin.yaml` under `dependencies.crossplane`. In a project using `mise`, add `crossplane = "<version>"` to `mise.toml` and run `mise exec -- xprin test …`.
 - **`xprin test` hangs or "cannot connect to Docker daemon"** — xprin shells out to `crossplane render`, which runs Composition Functions in Docker. Start Docker, or pass `--crossplane-binary` to `crossplane render` for Development-mode functions. Podman works as a Docker alternative.

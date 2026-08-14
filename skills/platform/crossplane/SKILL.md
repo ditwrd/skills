@@ -12,7 +12,7 @@ description: >
 
 # Crossplane v2 compositions
 
-Author v2 XRDs and Compositions. Artifacts are committed to Git and synced via GitOps (ArgoCD / Flux) — do not apply directly with `kubectl apply`. Assumes `function-go-templating v0.12+` and `function-auto-ready v0.7+`.
+Author v2 XRDs and Compositions. Artifacts are committed to Git and synced via GitOps (ArgoCD / Flux) — do not apply directly with `kubectl apply`. Assumes `function-go-templating v0.12+` and `function-auto-ready v0.6+`.
 
 ## §0 The trim-collapse bug (read this first)
 

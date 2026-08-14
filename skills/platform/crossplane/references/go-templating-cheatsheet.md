@@ -13,7 +13,7 @@ Context available inside templates (mirrors the `RunFunctionRequest` protobuf):
 - `dig "a" "b" "default" .x` — safe nested lookup, returns `default` on miss. Always use this over `.x.a.b` to avoid nil errors. The dotted-key form (`dig "a.b" "" .x`) does NOT work — split into separate string args.
 - `eq a b` — equality
 - `and a b c`, `or a b c` — booleans
-- `default "fallback" .x` — provide a default for empty values
+- `default "fallback" .x` — provide a default for empty values. **Booleans:** Sprig treats Go zero-values (`false`, `0`, `""`) as "empty," so `default true .spec.flag` silently discards an explicit `false` — the override is indistinguishable from omission. When the intended default is `true`, use presence-checking instead: `{{- if hasKey .spec "flag" }}{{ $v = .spec.flag }}{{ end }}`. Not needed when the default is `false` — there's no truthy zero-value to misfire against.
 - `b64enc`, `b64dec` — base64
 - `quote .x` — wrap in quotes
 - `toJson .x`, `fromJson "..."` — JSON round-trip

@@ -13,7 +13,7 @@ Two phases. First, extract what the session taught and register it durably. Then
 
 ## Inputs
 
-- **Path**: path to the skill directory (e.g., `skills/my-skill/`)
+- **Path**: the target skill's directory. If given a full/relative path, use it as-is. If given a bare name, resolve it directly instead of searching: try your harness's native skill-lookup mechanism first if it has one (an internal URI scheme, a `skills list`/`skills path` command, etc.); otherwise check well-known skill roots directly (`.claude/skills/<name>/`, `.omp/skills/<name>/`, `~/.agents/skills/<name>/`, `~/.claude/skills/<name>/`, or wherever your harness documents skills living). NEVER `find`/glob the whole filesystem for it — only fall back to a shallow search scoped to those roots if none of them hit.
 - **Optional concern**: what the user is seeing wrong ("not triggering", "too long", "agent skips steps")
 
 ---
