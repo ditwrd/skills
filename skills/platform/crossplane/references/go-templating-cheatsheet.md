@@ -72,6 +72,8 @@ For the authoritative list and signatures, see `function_maps.go` in <https://gi
   {{ if eq "map" (kindOf .) }}{{ with .transformation }}...{{ end }}{{ end }}
   ```
 
+- **Quote empty-string defaults for fields a CRD CEL rule requires present** — `targetPrefix: {{ default "" $x }}` renders `targetPrefix:` → YAML null → pruned by the structural schema → the CRD's `x-kubernetes-validations` `has(forProvider.targetPrefix)` rule rejects the apply. Emit `targetPrefix: "{{ $x }}"` instead — renders `""`, a present string. Verify with an xprin `FieldValue == ""` assertion (null fails the comparison).
+
 ## Cross-resource status writes (conditions, custom context)
 
 - `apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1`, `kind: ClaimConditions` with a `conditions:` array writes conditions onto the XR.
