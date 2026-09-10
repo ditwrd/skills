@@ -98,6 +98,7 @@ tests:
         - { type: Count, value: 2, resource: "QueuePolicy/*" }     # step 2 emits
         - { type: Exists, resource: "BucketNotification/*" }
         - { type: Exists, field: "data.queueUrls", resource: "Secret/*" }
+```
 
 ```yaml
 # tests/observed-resources/queue-default.yaml
@@ -121,6 +122,61 @@ status:
 
 **Common trap:** writing `status.arn` instead of `status.atProvider.arn` — the dig path `dig "resource" "status" "atProvider" "arn" "" $data` returns the default empty string, and the dependent resource silently doesn't render because the ARN lookup produces `""`.
 
+
+## Foreign-resource reads: the `extra-resources` input
+
+Compositions that emit `ExtraResources` requirements (see [go-templating-cheatsheet.md](go-templating-cheatsheet.md) §ExtraResources) are locally testable: xprin accepts `extra-resources` as a first-class input, same shape as `observed-resources` — per-test or under `common:`.
+
+```yaml
+# tests/module_xprin.yaml
+tests:
+  - name: "image secret present — Deployment renders with the injected image"
+    inputs:
+      xr: example-xr.yaml
+      composition: ../composition.yaml
+      functions: ../../../../provider/function.yaml
+      extra-resources: secret-image.yaml        # sibling under tests/
+    assertions:
+      xprin:
+        - { type: Exists, resource: "Deployment/*" }
+  - name: "fail-safe: Secret missing entirely — requirement unresolved, zero dependents, XR held not-Ready"
+    id: failsafe_missing_secret
+    inputs:
+      xr: example-xr.yaml
+      composition: ../composition.yaml
+      functions: ../../../../provider/function.yaml
+      # no extra-resources input at all — the requirement never resolves
+    assertions:
+      xprin:
+        - { type: NotExists, resource: "Deployment/*" }
+  - name: "fail-safe: Secret present but key absent — zero dependents, XR held not-Ready"
+    id: failsafe_missing_key
+    inputs:
+      xr: example-xr.yaml
+      composition: ../composition.yaml
+      functions: ../../../../provider/function.yaml
+      extra-resources: secret-no-image-key.yaml   # Secret without the expected data key
+    assertions:
+      xprin:
+        - { type: NotExists, resource: "Deployment/*" }
+
+```
+
+```yaml
+# tests/secret-image.yaml — real objects; requirements match by name.
+# Standard Secret wire shape: `data` values are base64-encoded; the
+# composition b64decs the key before rendering it into dependents.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: demo-app-image
+  namespace: demo-ns
+type: Opaque
+data:
+  image: "aW50ZWdyYWwucmVnaXN0cnkuY3ViZS5hc2lhL3BvcnQvZGVtby1hcHA6djEuMi4z"
+```
+
+Both fail-safe variants are mandatory pins, not nice-to-haves: they exercise the guarded-read contract (missing requirement resolution AND present-object-missing-key) — a composition that crashes, renders garbage, or renders dependents without the image fails here first.
 
 ## Test coverage patterns
 

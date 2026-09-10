@@ -76,4 +76,35 @@ For the authoritative list and signatures, see `function_maps.go` in <https://gi
 
 - `apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1`, `kind: ClaimConditions` with a `conditions:` array writes conditions onto the XR.
 - `apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1`, `kind: Context` with a `data:` map writes to the pipeline context (read in a later step at `.context.<key>`).
-- `apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1`, `kind: ExtraResources` with a `requirements:` array lets the function fetch extra resources into `.extraResources`.
+- `apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1`, `kind: ExtraResources` with a name-keyed `requirements:` map lets the function fetch extra resources into `.extraResources`. Native since v0.12 — do NOT add `function-extra-resources` for this.
+
+## §ExtraResources — reading foreign cluster objects (v0.12+)
+
+Don't confuse the two similarly-named things — they point in opposite directions:
+- **`ExtraResources`**: the composition **reads** cluster objects the XR doesn't own (e.g. a Secret projected by Vault secret-operator). Emit a requirement; Crossplane **core** resolves it (not the function pod — RBAC for the GET belongs to the Crossplane core SA).
+- **Claim-injected raw manifests** (an XRD field like `extraObjects`): the claim **writes** arbitrary manifests through your module. Render each as-is wrapped in a `kubernetes.m.crossplane.io/v1alpha1` Object (`spec.forProvider.manifest`), and **force `metadata.namespace` to the XR's namespace** regardless of what the manifest says — the executor's RBAC is the trust edge, not template redaction. Set `setResourceNameAnnotation` with a stable per-item name.
+
+Emit the requirement (anywhere in the render step's output). `requirements` is a **name-keyed map**, not a list; `matchName` is a **scalar** string, not `{name: ...}`:
+```yaml
+apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+kind: ExtraResources
+requirements:
+  app-image:                      # key under .extraResources
+    apiVersion: v1
+    kind: Secret
+    matchName: {{ $imageSecretName }}
+    namespace: {{ $ns }}
+```
+
+Read the results — requirements resolve a pass LATER (like `.observed.resources`, `.extraResources` is absent on the first reconcile), so guard every level: absent map, missing key, or no `items` all degrade to zero dependent resources — that fail-safe is the contract, not an error. Secret `data` values are base64 on the wire — `b64dec` before rendering; `stringData` never appears in fetched objects (the API server stores it as `data`):
+```
+{{- $image := "" }}
+{{- if $.extraResources }}
+{{- with (index $.extraResources "app-image") }}
+{{- range $item := .items }}
+{{- $image = b64dec (dig "data" "image" "" $item.resource) }}
+{{- end }}
+{{- end }}
+{{- end }}
+```
+Missing resolution (no match, wrong namespace, Secret absent) → empty map/key → dependents silently don't render and the XR can be held not-Ready. Pin it with dedicated test scenarios (see [testing-with-xprin.md](testing-with-xprin.md) `extra-resources` input).
