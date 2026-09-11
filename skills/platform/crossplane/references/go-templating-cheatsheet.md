@@ -59,6 +59,7 @@ For the authoritative list and signatures, see `function_maps.go` in <https://gi
 - **`$x := nil` is invalid** — produces `nil is not a command`. Initialize with type-appropriate zero values: `$x := ""` (string), `$x := false` (bool). Nest observed-resource lookups inside `if $.observed.resources`: `{{ if $.observed.resources }}{{ $v := index $.observed.resources "key" }}...{{ end }}`.
   **Filter lines:** `{{- if $x }}` on its own line before `filterSuffix:` — drop the left-trim, use `{{ if $x }}`.
   **Data-block collapse:** Same mechanism when non-emitting directives (assignments, side-effect-only range) sit between a YAML key and its value. Their `{{- ` trims eat newlines, collapsing `data:` into `queueUrls:`. **Fix:** precompute the value before the block, then emit the key:value with no intermediate directives.
+- **Template comments: `{{-` + ONE space, then `/*`.** `{{- /* comment */ -}}` parses, but indenting a comment to match neighboring actions (`{{-     /* comment */ -}}`) fatals the render with `template: manifests:N: unexpected "/" in command` — the comment opener must directly follow the trim marker plus exactly one space, even though ACTIONS tolerate deep indent (`{{-     range $c := ... }}` is legal). Keep every comment line at the `{{- /* ... */ -}}` form regardless of block depth.
 - **Never pipe through `indent` in `template: |` blocks** — `{{ include "x" . | indent N }}` uses `|` which the YAML parser interprets as a block scalar indicator, breaking the literal block. Keep `include` for single-value returns in variable assignments only: `{{- $v := include "t" (dict ...) -}}`. For multi-line YAML blocks, inline them directly — no define/include.
 - **Iterating N composed resources** — use `range` with `{{- range $i := until (.observed.composite.resource.spec.count | int) }}` and give each iteration a unique name via `setResourceNameAnnotation (print "name-" $i)`. Upstream `example/inline/composition.yaml` is the canonical reference; pattern is two resources per iteration (a producer labelled by `testing.upbound.io/example-name: ...`, a dependent that selects the producer by that label), and idempotency comes from `dig` with a `randomChoice` default that stabilizes after the first reconcile.
 - **`toYaml` inside `template: |` blocks** — `{{ toYaml . | indent N }}` at column 0 on its own line breaks the block scalar (the line is less indented than the block's baseline). **Fix:** keep both on the same line as the YAML key, using `nindent` instead of `indent`: `transformation:{{ toYaml . | nindent 16 }}`. The `nindent` prepends a newline plus N spaces, placing content under the parent key.
@@ -78,4 +79,35 @@ For the authoritative list and signatures, see `function_maps.go` in <https://gi
 
 - `apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1`, `kind: ClaimConditions` with a `conditions:` array writes conditions onto the XR.
 - `apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1`, `kind: Context` with a `data:` map writes to the pipeline context (read in a later step at `.context.<key>`).
-- `apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1`, `kind: ExtraResources` with a `requirements:` array lets the function fetch extra resources into `.extraResources`.
+- `apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1`, `kind: ExtraResources` with a name-keyed `requirements:` map lets the function fetch extra resources into `.extraResources`. Native since v0.12 — do NOT add `function-extra-resources` for this.
+
+## §ExtraResources — reading foreign cluster objects (v0.12+)
+
+Don't confuse the two similarly-named things — they point in opposite directions:
+- **`ExtraResources`**: the composition **reads** cluster objects the XR doesn't own (e.g. a Secret projected by Vault secret-operator). Emit a requirement; Crossplane **core** resolves it (not the function pod — RBAC for the GET belongs to the Crossplane core SA).
+- **Claim-injected raw manifests** (an XRD field like `extraObjects`): the claim **writes** arbitrary manifests through your module. Render each as-is wrapped in a `kubernetes.m.crossplane.io/v1alpha1` Object (`spec.forProvider.manifest`), and **force `metadata.namespace` to the XR's namespace** regardless of what the manifest says — the executor's RBAC is the trust edge, not template redaction. Set `setResourceNameAnnotation` with a stable per-item name.
+
+Emit the requirement (anywhere in the render step's output). `requirements` is a **name-keyed map**, not a list; `matchName` is a **scalar** string, not `{name: ...}`:
+```yaml
+apiVersion: meta.gotemplating.fn.crossplane.io/v1alpha1
+kind: ExtraResources
+requirements:
+  app-image:                      # key under .extraResources
+    apiVersion: v1
+    kind: Secret
+    matchName: {{ $imageSecretName }}
+    namespace: {{ $ns }}
+```
+
+Read the results — requirements resolve a pass LATER (like `.observed.resources`, `.extraResources` is absent on the first reconcile), so guard every level: absent map, missing key, or no `items` all degrade to zero dependent resources — that fail-safe is the contract, not an error. Secret `data` values are base64 on the wire — `b64dec` before rendering; `stringData` never appears in fetched objects (the API server stores it as `data`):
+```
+{{- $image := "" }}
+{{- if $.extraResources }}
+{{- with (index $.extraResources "app-image") }}
+{{- range $item := .items }}
+{{- $image = b64dec (dig "data" "image" "" $item.resource) }}
+{{- end }}
+{{- end }}
+{{- end }}
+```
+Missing resolution (no match, wrong namespace, Secret absent) → empty map/key → dependents silently don't render and the XR can be held not-Ready. Pin it with dedicated test scenarios (see [testing-with-xprin.md](testing-with-xprin.md) `extra-resources` input).

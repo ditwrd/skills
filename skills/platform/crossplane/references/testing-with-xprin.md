@@ -98,6 +98,7 @@ tests:
         - { type: Count, value: 2, resource: "QueuePolicy/*" }     # step 2 emits
         - { type: Exists, resource: "BucketNotification/*" }
         - { type: Exists, field: "data.queueUrls", resource: "Secret/*" }
+```
 
 ```yaml
 # tests/observed-resources/queue-default.yaml
@@ -121,6 +122,61 @@ status:
 
 **Common trap:** writing `status.arn` instead of `status.atProvider.arn` — the dig path `dig "resource" "status" "atProvider" "arn" "" $data` returns the default empty string, and the dependent resource silently doesn't render because the ARN lookup produces `""`.
 
+
+## Foreign-resource reads: the `extra-resources` input
+
+Compositions that emit `ExtraResources` requirements (see [go-templating-cheatsheet.md](go-templating-cheatsheet.md) §ExtraResources) are locally testable: xprin accepts `extra-resources` as a first-class input, same shape as `observed-resources` — per-test or under `common:`.
+
+```yaml
+# tests/module_xprin.yaml
+tests:
+  - name: "image secret present — Deployment renders with the injected image"
+    inputs:
+      xr: example-xr.yaml
+      composition: ../composition.yaml
+      functions: ../../../../provider/function.yaml
+      extra-resources: secret-image.yaml        # sibling under tests/
+    assertions:
+      xprin:
+        - { type: Exists, resource: "Deployment/*" }
+  - name: "fail-safe: Secret missing entirely — requirement unresolved, zero dependents, XR held not-Ready"
+    id: failsafe_missing_secret
+    inputs:
+      xr: example-xr.yaml
+      composition: ../composition.yaml
+      functions: ../../../../provider/function.yaml
+      # no extra-resources input at all — the requirement never resolves
+    assertions:
+      xprin:
+        - { type: NotExists, resource: "Deployment/*" }
+  - name: "fail-safe: Secret present but key absent — zero dependents, XR held not-Ready"
+    id: failsafe_missing_key
+    inputs:
+      xr: example-xr.yaml
+      composition: ../composition.yaml
+      functions: ../../../../provider/function.yaml
+      extra-resources: secret-no-image-key.yaml   # Secret without the expected data key
+    assertions:
+      xprin:
+        - { type: NotExists, resource: "Deployment/*" }
+
+```
+
+```yaml
+# tests/secret-image.yaml — real objects; requirements match by name.
+# Standard Secret wire shape: `data` values are base64-encoded; the
+# composition b64decs the key before rendering it into dependents.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: demo-app-image
+  namespace: demo-ns
+type: Opaque
+data:
+  image: "aW50ZWdyYWwucmVnaXN0cnkuY3ViZS5hc2lhL3BvcnQvZGVtby1hcHA6djEuMi4z"
+```
+
+Both fail-safe variants are mandatory pins, not nice-to-haves: they exercise the guarded-read contract (missing requirement resolution AND present-object-missing-key) — a composition that crashes, renders garbage, or renders dependents without the image fails here first.
 
 ## Test coverage patterns
 
@@ -198,3 +254,5 @@ Pinning: xprin v0.2+ supports Crossplane v2. Its `tests` block accepts the same 
 - **No expect-failure assertion type.** `xprin test --help` has no flag for "this render should error," and `make test`'s `xprin test ... || exit 1` per module treats any nonzero exit as a hard break. A `{{ fail "..." }}` template guard can't be committed as a permanent case in the regular suite. Verify it with a throwaway `*_xprin.yaml` outside the module's `tests/` (e.g. `/tmp/scratch-<module>/<case>/case_xprin.yaml`), with `common.inputs.composition`/`functions` set to absolute paths to the real files (a scratch dir can't reach them by relative depth) and any placeholder assertion — its content is irrelevant since `fail()` aborts the render before assertions evaluate. Run via `xprin test --config-file .xprin.yaml <scratch-dir>`, confirm the nonzero exit and exact error message, then delete the scratch dir. This also satisfies a repo policy banning raw `crossplane render` (see "Inspect rendered output" above) — it only ever calls the CLI through xprin.
 - **`xprin test` fails with "crossplane: command not found"** — install the `crossplane` CLI 1.15+ and ensure it's on PATH, or set the path in `~/.config/xprin.yaml` under `dependencies.crossplane`. In a project using `mise`, add `crossplane = "<version>"` to `mise.toml` and run `mise exec -- xprin test …`.
 - **`xprin test` hangs or "cannot connect to Docker daemon"** — xprin shells out to `crossplane render`, which runs Composition Functions in Docker. Start Docker, or pass `--crossplane-binary` to `crossplane render` for Development-mode functions. Podman works as a Docker alternative.
+- **A green suite proves nothing about Kubernetes admission.** xprin runs the composition pipeline in Docker and never validates rendered objects against the k8s API: label and annotation VALUE charset (only alphanumerics, `-`, `_`, `.`; max 63 chars — a repo path like `modules/workloads/app` passes every assertion and is rejected by every live apply), name length, RFC 1123 name segments. Any template code that shapes a name, label, or annotation must be validated on the RENDERED output: run `scripts/render.sh`, split the multi-doc output, `kubectl apply --dry-run=client -f` each doc. Renderable ≠ applyable.
+- **Hand-built whole-document JSON expectations: let the first render correct you.** Go `encoding/json` sorts map keys alphabetically, so conditions group as `{"StringEquals":{"aws:PrincipalOrgID":[...],"aws:SourceAccount":[...]}}` — but if you write the expected string before ever rendering, your own assert is the likeliest failure (real case: asserting `NotPrincipal` where the fixture declares `principals`; the render was right). Run the RED render first, diff the actual, pin the corrected string. A render-fatal (YAML breakage) counts as red for the scenario — then fix the composition, not the fixture.

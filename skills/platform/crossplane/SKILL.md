@@ -156,15 +156,16 @@ For the rare case where `*Ref` can't express the dependency, add a second `funct
 
 - `references/xrd-anatomy.md` — full v2 XRD anatomy, claim schema design rules (required sparingly, avoid booleans, prefer arrays, leave room for variants, version round-tripping)
 - `references/composition-anatomy.md` — v1 Composition API, function pipeline constraints (what functions can/cannot change)
-- `references/go-templating-cheatsheet.md` — context fields, Sprig helpers, custom built-in helpers from `function_maps.go`, common gotchas (incl. trim-collapse), cross-resource status writes
+- `references/go-templating-cheatsheet.md` — context fields, Sprig helpers, custom built-in helpers from `function_maps.go`, common gotchas (incl. trim-collapse), cross-resource status writes, ExtraResources (reading foreign cluster objects) vs claim-injected raw manifests (extraObjects-style)
 - `references/composition-patterns.md` — multi-resource dependency (§4.1), connection secrets (§4.2), region/multi-account (§4.3), optional resources (§4.4), status conditions (§4.5), cross-XR references (§4.6), orphaning / deletion lifecycle (§4.7)
 - `references/mrd-discovery.md` — finding and inspecting provider MRDs, activating Inactive CRDs, `kubectl explain`, schema dumps
-- `references/testing-with-xprin.md` — install, `.xprin.yaml` subcommand pin, two-reconcile test pattern, FieldExists/FieldValue assertion coverage, cp-hook for capturing rendered output, gotchas
+- `references/testing-with-xprin.md` — install, `.xprin.yaml` subcommand pin, two-reconcile test pattern, `extra-resources` input for foreign-resource reads, FieldExists/FieldValue assertion coverage, cp-hook for capturing rendered output, gotchas
 - `references/module-folder-structure.md` — the canonical module layout (`modules/<provider>/<thing>/` + `tests/`), the TDD workflow for a new module, what NOT to do
 - `references/common-gotchas.md` — top-level validation gotchas (v1/v2 API rules, external-name, secret guards, MRD state)
 - `references/diagnosing-thrashing.md` — step-by-step diagnosis and fix for WatchCircuitOpen reconciliation thrashing
 - `references/composition-audit.md` — audit checklist for feedback loops, external controller conflicts, and connection detail thrashing
 - `references/makefile-test.md` — Makefile `test` target shape, usage, and when to create it
+- `references/kubernetes-executor.md` — composing native k8s objects via provider-kubernetes `Object` MRs: wrapper naming, executor RBAC, `managementPolicies` deletion contracts, zero-gap RBAC handover between ArgoCD apps
 - `references/generating-readmes.md` — generating READMEs with `crossplane-docs`, fixing multiline table cells
 - `references/iam-policy-transform.md` — building IAM policy JSON from Terraform-style statement objects using dict/set/append/toJson
 - `scripts/render.sh` — `crossplane render --crossplane-version=v2.3.1` wrapper
