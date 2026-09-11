@@ -6,7 +6,8 @@ description: >
   pipeline with function-go-templating, building a multi-resource composite,
   discovering a provider ManagedResourceDefinition schema, diagnosing a
   WatchCircuitOpen circuit breaker trip, auditing a composition for feedback
-  loops or SSA conflicts, testing locally with xprin, or working with
+  loops or SSA conflicts, testing locally with xprin, deciding deletionPolicy
+  or orphaning composed resources (provider-kubernetes Object), or working with
   provider-specific patterns (AWS, Vault, etc.).
 ---
 
@@ -33,6 +34,7 @@ This is the #1 thing that will burn you on your first composition. It looks like
    - `scripts/render.sh xr.yaml composition.yaml functions.yaml` — one-off preview (pins `--crossplane-version=v2.3.1` because `crossplane render` defaults to v1.x and rejects the v2 XRD schema). **Rendering success only proves the Go template is syntactically valid** — it runs the templating function locally and does not check `kind` names or fields against the real installed CRDs.
    - `kubectl apply --dry-run=server -f <file>` against a cluster with the target CRDs installed (`--dry-run=client` also works — resolving the resource kind still requires a discovery/RESTMapper round-trip) to confirm schema, required fields, and `kind` names parse. Split render.sh's multi-doc output and drop the XR doc first if you only want to check composed resources. This is the step that actually catches a wrong `kind` (e.g. templated `BucketAcl` when the real CRD kind is `BucketACL`) — render alone will not.
    Server-side dry-run also evaluates the CRD's CEL `x-kubernetes-validations` rules (e.g. `bucketloggings` requires `spec.forProvider.targetPrefix`) — the one check that catches them; render and xprin never will. See [references/common-gotchas.md](references/common-gotchas.md).
+   **Provider-kubernetes `Object` MRs wrap an inner manifest that render/xprin/Object dry-run never validate.** Dry-running the `Object` shell checks only its own CRD (which is how `providerConfigRef.kind` errors surface — see Hard rules), never the inner `forProvider.manifest` kind/fields. The wrapped manifest is only validated when the provider applies it live — a wrong inner `kind` or field passes every local check and fails at reconcile. For wrapped objects, dry-run the *inner manifest alone* against the target CRD (extract it from render output first).
    - Before running xprin, check `.xprin.yaml` exists at the repo root with the correct `subcommands.render` and `subcommands.validate` pins (`--crossplane-version=v2.3.1`). Without this, xprin v0.2 invokes `crossplane internal render` internally but the crossplane CLI v2.3.x has no `internal` subcommand, producing `unexpected argument internal`. See [references/testing-with-xprin.md pin section](references/testing-with-xprin.md).
    - Use `make test` (or `make test MODULES=modules/<provider>/<module>`) to run all xprin suites via the repo Makefile, which pins `--config-file .xprin.yaml` by construction. This avoids accidentally falling back to `~/.config/xprin.yaml`. See [references/makefile-test.md](references/makefile-test.md) for the canonical Makefile shape.
 5. **Commit to Git, let GitOps sync.** After sync, read live state with `kubectl get <xrd-kind> -A`, `kubectl describe <xr> -n <ns>`, and `kubectl get managed` to see what got rendered. **Watch for Argo CD sync loops:** if the XRD has fields with `default:` (`region`, `debug: false`), Crossplane fills them in on apply — Argo CD sees the live object has fields the manifest lacks, detects drift, and re-syncs. Add `ignoreDifferences` with `jqPathExpressions` for each defaulted path (`.spec.region`, `.spec.queues[].debug`) to the Argo Application.
@@ -155,7 +157,7 @@ For the rare case where `*Ref` can't express the dependency, add a second `funct
 - `references/xrd-anatomy.md` — full v2 XRD anatomy, claim schema design rules (required sparingly, avoid booleans, prefer arrays, leave room for variants, version round-tripping)
 - `references/composition-anatomy.md` — v1 Composition API, function pipeline constraints (what functions can/cannot change)
 - `references/go-templating-cheatsheet.md` — context fields, Sprig helpers, custom built-in helpers from `function_maps.go`, common gotchas (incl. trim-collapse), cross-resource status writes
-- `references/composition-patterns.md` — multi-resource dependency (§4.1), connection secrets (§4.2), region/multi-account (§4.3), optional resources (§4.4), status conditions (§4.5), cross-XR references (§4.6)
+- `references/composition-patterns.md` — multi-resource dependency (§4.1), connection secrets (§4.2), region/multi-account (§4.3), optional resources (§4.4), status conditions (§4.5), cross-XR references (§4.6), orphaning / deletion lifecycle (§4.7)
 - `references/mrd-discovery.md` — finding and inspecting provider MRDs, activating Inactive CRDs, `kubectl explain`, schema dumps
 - `references/testing-with-xprin.md` — install, `.xprin.yaml` subcommand pin, two-reconcile test pattern, FieldExists/FieldValue assertion coverage, cp-hook for capturing rendered output, gotchas
 - `references/module-folder-structure.md` — the canonical module layout (`modules/<provider>/<thing>/` + `tests/`), the TDD workflow for a new module, what NOT to do

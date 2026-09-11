@@ -123,3 +123,51 @@ For per-resource readiness overrides, set `gotemplating.fn.crossplane.io/ready: 
 ## 4.6 Cross-XR references (status copy)
 
 If one XR needs another's status fields, declare the reference on the consuming XR's spec (e.g. `spec.networkRef.name`) and use `function-status-transformer` to copy the referenced XR's `status.<field>` into the consumer's `status` (or `spec`). This is the v2 replacement for reading the connection secret of a referenced v1 claim.
+
+## 4.7 Deletion lifecycle: orphaning
+
+`deletionPolicy` (default `Delete`) lives on each **composed managed resource**, not on the composition or XR. When the XR is deleted, Crossplane GC deletes the composed MRs; each MR's policy decides whether the provider deletes the external (`Delete`) or leaves it running (`Orphan`).
+
+**Native compositions cannot orphan Kubernetes-native resources.** `deletionPolicy` is unrenderable on a raw CR emitted by a go-templating step (crossplane#7146) — the XR delete force-deletes it. To orphan k8s-native resources, compose them through **provider-kubernetes `Object` MRs**. Two variants exist — a namespaced one (`kubernetes.m.crossplane.io/v1alpha1`, pairs with Namespaced v2 XRDs) and a cluster-scoped one (`kubernetes.crossplane.io/v1alpha2`, shown below); they orphan through different mechanisms, see the mapping after the example:
+
+```yaml
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    {{ setResourceNameAnnotation "cluster" }}
+spec:
+  providerConfigRef:
+    name: default
+    kind: ProviderConfig
+  readiness:
+    policy: DeriveFromObject  # mirrors the wrapped object's Ready condition
+  forProvider:
+    manifest:
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      metadata:
+        name: {{ $name }}
+      # ... full object spec indented here
+  deletionPolicy: Orphan
+```
+
+Scope/group mapping — the orphan mechanism differs by variant (verified against the live CRDs, don't mix them):
+
+- **`kubernetes.crossplane.io/v1alpha2` `Object` is cluster-scoped and HAS `deletionPolicy`.** Its config group defines only `ProviderConfig` (cluster-scoped) — `providerConfigRef.kind: ProviderConfig`.
+- **`kubernetes.m.crossplane.io/v1alpha1` `Object` is namespaced and has NO `deletionPolicy` field** (spec offers only `managementPolicies`). Orphan there = omit `Delete` from `managementPolicies`:
+  ```yaml
+  managementPolicies: [Observe, Create, Update, LateInitialize]  # Delete omitted = orphan
+  ```
+  Its `providerConfigRef` takes `kind: ClusterProviderConfig` (cluster-scoped, shared across namespaces, the standard `in-cluster` config) or a namespaced `ProviderConfig`.
+- **`providerConfigRef` MUST always set `kind`.** On the `.m.` Object the CRD marks `[kind, name]` required and the schema default is suppressed once the object is partially set — composing only `name: in-cluster` passes xprin green but fails live with `spec.providerConfigRef.kind: Required value` on every composed MR.
+
+Readiness: `DeriveFromObject` for the long-running wrapped object (mirrors its `Ready` condition); leave the default (`SuccessfulCreate`) on static objects — Secrets, RBAC — which are Available as soon as created.
+
+Operational consequences once Orphan fires (claim deleted):
+
+- **Every composed MR object is gone.** Cleanup tooling must target *externals*: plain `kubectl` for k8s-native externals, the provider's cloud CLI for externals that are not k8s objects (e.g. an upjet EKS PodIdentityAssociation MR orphans to a bare AWS association — delete it with `aws eks delete-pod-identity-association`, not kubectl).
+- **Mid-deletion gate**: XR/claim absent but the composed MRs still present means GC is in flight — wait until `kubectl get objects.kubernetes.m.crossplane.io -A | grep <name>` is empty before touching externals. Bare `objects` polls the wrong kind, so always qualify `.m.`. GC is not instant: the XR finalizer holds until the wrapped MRs settle their no-delete semantics (observed ~4–5 min for a full backup graph), so poll, don't assume.
+- Orphan is **per-resource**: orphaning the main resource while dependents cascade-delete strands a half-alive graph. Apply the orphan mechanism to every composed resource that must survive — `deletionPolicy: Orphan` on v1alpha2 Objects, `managementPolicies` minus `Delete` on `.m.` Objects — across the whole graph (e.g. Cluster + Archive + ScheduledBackup + Secrets + RBAC).
+- **Legacy-adopted externals keep old ownership.** A claim migrated onto a `.m.` executor from a composition that wrote ownerRefs/`crossplane.io/*` fields directly onto externals keeps those fields: the `.m.` composed controller never writes them and does not strip them on adoption. Deleting such a legacy claim can cascade-delete the externals (k8s GC on the ownerRef) instead of orphaning. Gate on ownerReferences before trusting orphan semantics on adopted claims.
+- **Verify the orphan design with a throwaway XR before trusting it on a real claim.** Create an XR mirroring the real spec in an isolated namespace, let it reach Ready, delete it, then assert the externals survive with **zero** Crossplane ownership: no `crossplane.io/*` labels, no annotations, no ownerRefs on the wrapped objects. Only then does an orphan gate count as passed.
