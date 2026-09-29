@@ -23,6 +23,9 @@ side-by-side comparison of how each provider handles external names, including
 provider-specific helpers, template formats, and pattern frequency.
 For runtime errors: `references/troubleshooting.md`. Provider-specific
 incident notes (e.g. Snowflake): `references/snowflake-provider-notes.md`.
+Maintaining the provider's public fork (comment scrubbing, per-branch CI
+gating): `references/fork-maintenance.md`.
+
 ## Branches
 
 Every upjet workflow starts at the Terraform Registry. The resource's **import
@@ -48,12 +51,7 @@ Completion criterion: provider generates, compiles, and can reconcile one resour
    to maintain). Choose based on family size vs API isolation needs.
 8. **Register** group configurators in `config/provider.go` — import the package, add to the `for range` loop in both `GetProvider()` and `GetProviderNamespaced()`.
 9. **Run `make generate`** (requires `goimports` — `go install golang.org/x/tools/cmd/goimports@latest`; if `command not found`, add `$(go env GOPATH)/bin` to PATH). Verify `apis/`, `internal/controller/`, `package/crds/`, `examples-generated/`. If the scraper produces broken YAML keys, see `references/troubleshooting.md`.
-10. **Stage examples** from `examples-generated/` to `examples/<group>/<scope>/v1beta1/`. This is typically a straight copy — generated examples already have correct API group refs (`<provider>.crossplane.io`) and no `-TODO` cleanup. Verify counts match:
-    ```shell
-    for d in cluster/stable cluster/preview namespaced/stable namespaced/preview; do
-      printf "  %-25s %3d\n" "$d" $(ls "examples-generated/$d/v1alpha1/" 2>/dev/null | wc -l)
-    done
-    ```
+10. **Stage examples** from `examples-generated/` to `examples/<group>/<scope>/v1beta1/`. This is typically a straight copy — generated examples already have correct API group refs (`<provider>.crossplane.io`) and no `-TODO` cleanup. Verify counts match per scope (`ls examples-generated/<scope>/v1alpha1 | wc -l`).
     Add dependent resources (secrets, provider config refs) after copying.
 11. **Test** — see [test-resource](#test-resource--manual-and-automated-testing).
 12. **Run `make reviewable`** (generates, lints, and runs unit tests) before pushing — same as the CI pipeline. For providers with 130+ resources this takes ~3 minutes (generate ~140s, lint ~60s, test ~100s). If `check-diff` fails, `make generate` produced uncommitted changes.
@@ -200,4 +198,3 @@ Key tasks: group/kind renames, field renames/type changes, external name format
 changes, composition patch conversion.
 
 See `references/migration.md` for converter registration, sources, and targets.
-

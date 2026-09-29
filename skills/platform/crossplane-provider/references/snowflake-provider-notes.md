@@ -45,3 +45,4 @@ the provider's build-switch takes `all_schemas_in_database` first and
 silently drops the future-schemas grant. Fix by splitting into two
 resources, mirroring the repo's own `*-grants-all` / `*-grants-future`
 naming convention already used for schema-object grants.
+
